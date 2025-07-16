@@ -22,7 +22,7 @@ def rotate(src,dest,spher_coords,roll,pitch,yaw,width,height):
     spherical_coords = jnp.moveaxis(spher_coords, 0, -1)
     spherical_coords = spherical_coords.reshape(-1, 3)
     spherical_coords = jnp.dot(spherical_coords, R)
-    spherical_coords = spherical_coords.reshape(*spher_coords[0].shape, 3)
+    spherical_coords = spherical_coords.reshape(spher_coords[0].shape, 3)
     
     
     # convert spherical coordinates back to equirectangular coordinates
