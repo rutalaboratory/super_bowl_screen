@@ -44,6 +44,39 @@ class Stimulation_Pipeline():
               "at position x=", self.width_first,"y=", self.height_first)
         # generate stimulus texture 
 
+    def project_dot_at(self, azimuth, elevation, radius=5, dot_color=(255, 255, 255), bg_color=(0, 0, 0)):
+        """
+        Projects a single dot on the screen at the given azimuth and elevation (in degrees).
+        Dot will be shown in dot_color on a background of bg_color.
+        """
+
+        # Validate bounds
+        if not (self.Projector_1.fov_azi[0] <= azimuth <= self.Projector_1.fov_azi[1]):
+            print("Azimuth out of bounds.")
+            return
+        if not (self.Projector_1.fov_ele[0] <= elevation <= self.Projector_1.fov_ele[1]):
+            print("Elevation out of bounds.")
+            return
+
+        # Convert azimuth and elevation to pixel coordinates
+        x = int((azimuth - self.Projector_1.fov_azi[0]) / 
+                (self.Projector_1.fov_azi[1] - self.Projector_1.fov_azi[0]) * self.xdim)
+        y = int((1 - (elevation - self.Projector_1.fov_ele[0]) /
+                (self.Projector_1.fov_ele[1] - self.Projector_1.fov_ele[0])) * self.ydim)
+
+        # Create background
+        img = np.full((self.ydim, self.xdim, 3), bg_color, dtype=np.uint8)
+        cv2.circle(img, (x, y), radius, dot_color, -1)
+
+        # Project the image
+        rotated = self.Stimulus.rot_equi_img(img, self.dest, 0, 0, 0)
+        cropped = select_fov(rotated)
+        masked = self.Projector_1.project_image(cropped)
+        output = self.Projector_1.mask_image(masked)
+        cv2.imshow(self.WINDOW_NAME, output)
+        cv2.waitKey(10)
+
+
     def generate_grating_vertical(self,color1, color2,spatial_freq):
         
         xdim=self.xdim
@@ -75,7 +108,7 @@ class Stimulation_Pipeline():
         for y in range(int(ydim/(pixperdeg))):
             pic1[2*y*pixperdeg:(2*y+1)*pixperdeg,:] = 1
         pic = ((pic+pic1)%2)*color1
-        return pic
+        return pic                                                           
 
     def generate_grating_sine_vertical(self,amplitude, offset,spatial_freq):
         xdim=self.xdim
@@ -195,7 +228,7 @@ class Stimulation_Pipeline():
             else:
                 rotated = self.Stimulus.rot_equi_img(resized,self.dest,rot_offset[0],rot_offset[1],rot_offset[2])
                 
-            croped = select_fov(rotated)
+            croped =  (rotated)
             masked = self.Projector_1.project_image(croped)
             output = self.Projector_1.mask_image(masked)
             cv2.imshow(self.WINDOW_NAME,output)
@@ -236,6 +269,32 @@ class Stimulation_Pipeline():
         pic = np.ones([ydim,xdim],dtype = "uint8")*color_bg
         pic[mask]=color_disc
         return pic
+    
+    def generate_dot(self, background_color, dot_color, dot_center, dot_radius):
+        """
+        Draw a dot on a grayscale background.
+
+        Parameters:
+            background_color (int): Grayscale value for the background (0–255).
+            dot_color (int): Grayscale value for the dot (0–255).
+            dot_center (tuple): (x, y) coordinates of the dot center in pixels.
+            dot_radius (int): Radius of the dot in pixels.
+
+        Returns:
+            np.ndarray: Grayscale image with a dot.
+        """
+        xdim = self.xdim
+        ydim = self.ydim
+        img = np.ones((ydim, xdim), dtype=np.uint8) * background_color
+
+        xx, yy = np.meshgrid(np.arange(xdim), np.arange(ydim))
+        dist_squared = (xx - dot_center[0])**2 + (yy - dot_center[1])**2
+        mask = dist_squared <= dot_radius**2
+        img[mask] = dot_color
+
+        return img
+
+
     
 
 # each online calculated texture class consists of an initialization and an run function.
@@ -291,7 +350,109 @@ class ShowVideo():
         self.arena.oldframe = frame
         return resized
     
+class MovingDotAzimuthal():
     
+    def __init__(self, arena, elevation=90, elevation_width=5, azi_limits=(30,150), speed=20):
+        self.arena = arena
+        self.elevation = elevation
+        self.elevation_width = elevation_width
+        self.azi_min, self.azi_max = azi_limits
+        self.speed = speed  # degrees/sec
+        self.direction = 1  # 1 for right, -1 for left
+
+        # calculate pixel radius based on elevation width
+        self.pixel_radius = int((elevation_width / 2) / self.arena.resolution[0])
+
+        # fixed pixel y position based on elevation
+        self.y = int((1 - (elevation - self.arena.Projector_1.fov_ele[0]) /
+                    (self.arena.Projector_1.fov_ele[1] - self.arena.Projector_1.fov_ele[0])) * self.arena.ydim)
+
+        # start at min azimuth
+        self.azi = self.azi_min
+        self.last_update_time = time.time()
+        self.pic = np.full((self.arena.ydim, self.arena.xdim, 3), 255, dtype=np.uint8)  # white background
+
+
+    def run(self):
+        current_time = time.time()
+        dt = current_time - self.last_update_time
+        self.last_update_time = current_time
+
+        # Update azimuth based on speed and direction
+        self.azi += self.speed * dt * self.direction
+
+        # Reflect direction if hitting bounds
+        if self.azi >= self.azi_max:
+            self.azi = self.azi_max
+            self.direction = -1
+        elif self.azi <= self.azi_min:
+            self.azi = self.azi_min
+            self.direction = 1
+
+        # Calculate x position in pixels
+        x = int((self.azi - self.arena.Projector_1.fov_azi[0]) /
+                (self.arena.Projector_1.fov_azi[1] - self.arena.Projector_1.fov_azi[0]) * self.arena.xdim)
+
+        # Reset image
+        self.pic[:, :, :] = 255  # white background
+        cv2.circle(self.pic, (x, self.y), self.pixel_radius, (0, 0, 0), -1)
+
+        return self.pic
+
+
+import numpy as np
+import time
+import cv2
+
+class MovingDotElevation():
+
+    def __init__(self, arena, azimuth=90, azimuth_width=5, ele_limits=(30,150), speed=20):
+        self.arena = arena
+        self.azimuth = azimuth
+        self.azimuth_width = azimuth_width
+        self.ele_min, self.ele_max = ele_limits
+        self.speed = speed  # degrees/sec
+        self.direction = 1  # 1 for up, -1 for down
+
+        # calculate pixel radius based on azimuth width
+        self.pixel_radius = int((azimuth_width / 2) / self.arena.resolution[1])
+
+        # fixed pixel x position based on azimuth
+        self.x = int((self.azimuth - self.arena.Projector_1.fov_azi[0]) /
+                     (self.arena.Projector_1.fov_azi[1] - self.arena.Projector_1.fov_azi[0]) * self.arena.xdim)
+
+        # start at min elevation
+        self.ele = self.ele_min
+        self.last_update_time = time.time()
+        self.pic = np.full((self.arena.ydim, self.arena.xdim, 3), 255, dtype=np.uint8)  # white background
+
+    def run(self):
+        current_time = time.time()
+        dt = current_time - self.last_update_time
+        self.last_update_time = current_time
+
+        # Update elevation based on speed and direction
+        self.ele += self.speed * dt * self.direction
+
+        # Reflect direction if hitting bounds
+        if self.ele >= self.ele_max:
+            self.ele = self.ele_max
+            self.direction = -1
+        elif self.ele <= self.ele_min:
+            self.ele = self.ele_min
+            self.direction = 1
+
+        # Calculate y position in pixels
+        y = int((1 - (self.ele - self.arena.Projector_1.fov_ele[0]) /
+                 (self.arena.Projector_1.fov_ele[1] - self.arena.Projector_1.fov_ele[0])) * self.arena.ydim)
+
+        # Reset image
+        self.pic[:, :, :] = 255  # white background
+        cv2.circle(self.pic, (self.x, y), self.pixel_radius, (0, 0, 0), -1)
+
+        return self.pic
+
+
 class LoomingDisk(): 
     
     def __init__(self,arena,center=None):
@@ -400,3 +561,6 @@ class ShowVerticalEdge():
         self.pic = cv2.cvtColor(pic, cv2.COLOR_GRAY2RGB)    
         
         return self.pic
+    
+ ######################################### UNTESTED ###########################################
+
