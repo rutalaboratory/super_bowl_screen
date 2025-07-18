@@ -9,11 +9,14 @@ import functools
 
 class Stimulation_Pipeline():
     
-    def __init__(self,img_size=(360, 720,3), fov_azi=(0,180), fov_ele=(15,140),img_offsetx=3840+3240,img_offsety=2400,name = "Arena"):
+    def __init__(self,img_size=(360, 720,3), fov_azi=(0,180), fov_ele=(15,140),img_offsetx=3840+3240,img_offsety=2400,name = "Arena", projector_width_pixels=1280):
         #initialize Projection Objects
         azi_pix = int(img_size[1]/360*fov_azi[1])
         ele_pix = int(img_size[0]/180*fov_ele[1])
         
+        print("Azi Pix", azi_pix)
+        print("ele Pix", ele_pix)
+
         self.azi_pix = azi_pix
         self.ele_pix = ele_pix
         
@@ -23,7 +26,7 @@ class Stimulation_Pipeline():
         self.image_size = img_size
         self.dest = np.zeros(img_size,dtype = "uint8")
         self.Stimulus = Stimulus(self.dest.shape)
-        self.Projector_1 = Projector()
+        self.Projector_1 = Projector(proj_x=projector_width_pixels, proj_y=int(projector_width_pixels/2))
         self.Projector_1.initialize_projection_matrix((ele_pix,azi_pix),fov_azi,fov_ele)
         self.dt = 0
         self.time_start =0

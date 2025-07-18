@@ -45,8 +45,12 @@ class Stimulus():
         pi = jnp.pi
         
         x, y = jnp.meshgrid(jnp.arange(self.width), jnp.arange(self.height))
+        # print(y)
+
         xx = 2 * (x + 0.5) / self.width - 1
         yy = 2 * (y + 0.5) / self.height - 1
+
+        print(xx)
         lng = pi * xx
         lat = 0.5 * pi * yy
     
@@ -164,4 +168,4 @@ class Projector():
         
         projektor = apply_mask(image,self.mask)
         self.mask_screen = insert_image(self.mask_screen, projektor, (0,self.border))
-        return  np.asarray(self.mask_screen,dtype = "uint8")
+        return  np.asarray(self.mask_screen,dtype = "uint8") 
