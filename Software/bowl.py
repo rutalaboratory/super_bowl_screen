@@ -96,7 +96,7 @@ def insert_image(large_img, small_img, position):
 
 
 class Projector():
-    def __init__(self, res_x=1280, res_y=720, proj_x=1240, proj_y=620):
+    def __init__(self, res_x=1280, res_y=720, proj_x=1280, proj_y=640):
         
         self.stim_x= 360
         self.stim_y= 180
