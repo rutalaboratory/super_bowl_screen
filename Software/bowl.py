@@ -36,13 +36,27 @@ def rotate(src,dest,spher_coords,roll,pitch,yaw,width,height):
     
 
 class Stimulus():
+    """
+    The Stimulus class handles the creation and transformation of visual stimuli for the bowl arena.
+    It converts flat images into the correct format for spherical projection, handling all the
+    mathematical transformations needed to make the image look correct when projected onto a curved surface.
+    """
+    
     def __init__(self,img_size, fov_azi=0, fov_ele=0):
+        """
+        Initialize the stimulus generator.
         
-        self.width= img_size[1]
-        self.height= img_size[0]
-        self.fov_azi = fov_azi
-        self.fov_ele = fov_ele
-        pi = jnp.pi
+        Parameters:
+        - img_size: Tuple of (height, width, channels) for the stimulus image
+        - fov_azi: Field of view in azimuth (horizontal) direction in degrees
+        - fov_ele: Field of view in elevation (vertical) direction in degrees
+        """
+        # Store basic dimensions
+        self.width = img_size[1]    # Image width in pixels
+        self.height = img_size[0]   # Image height in pixels
+        self.fov_azi = fov_azi      # Horizontal field of view
+        self.fov_ele = fov_ele      # Vertical field of view
+        pi = jnp.pi                 # Mathematical constant pi
         
         x, y = jnp.meshgrid(jnp.arange(self.width), jnp.arange(self.height))
         # print(y)
@@ -50,7 +64,6 @@ class Stimulus():
         xx = 2 * (x + 0.5) / self.width - 1
         yy = 2 * (y + 0.5) / self.height - 1
 
-        print(xx)
         lng = pi * xx
         lat = 0.5 * pi * yy
     
@@ -73,8 +86,8 @@ projection_jit = jax.jit(projection)
 
 @jit
 def select_fov(image):
-        return image[0:840, 0:1080,:]
-        # return image[0:280,180:540,:]
+        # return image[0:840, 0:1080,:]
+        return image[0:280,180:540,:]
     
 @jit
 def write_fov(image,insertion):

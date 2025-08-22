@@ -1,8 +1,8 @@
 import socket
 import time
-import multiprocessing as mp
 import numpy as np
-
+import subprocess
+import math
 
 class FicTracClient:
     """
@@ -10,109 +10,162 @@ class FicTracClient:
     and optionally sending parsed data rows to a multiprocessing queue.
     """
 
-    def __init__(self, host='127.0.0.1', port=3000, queue=None, debug=False):
-        """
-        Initialize the client.
-
-        Args:
-            host (str): IP address of the FicTrac server.
-            port (int): Port on which FicTrac is serving data.
-            queue (multiprocessing.Queue): Queue to send parsed data to.
-            debug (bool): Whether to measure and print execution timing.
-        """
+    def __init__(self, host='127.0.0.1', port=3000, queue=None, debug=False, stop_event=None):
+        # Initialize connection parameters and internal variables
         self.host = host
         self.port = port
-        self.sock = None
-        self.buffer = ""
-        self.queue = queue
-        self.debug = debug
-        self.loop_times = []  # Stores duration of each processing loop
+        self.sock = None  # Will hold the socket connection
+        self.buffer = ""  # Buffer for accumulating incoming data
+        self.queue = queue  # Optional multiprocessing queue to send parsed data
+        self.debug = debug  # Enable timing/debug prints
+        self.loop_times = []  # Store loop durations for performance diagnostics
+        self.stop_event = stop_event  # Event flag for graceful shutdown
 
     def connect(self):
-        """
-        Establish socket connection to the FicTrac server.
-        """
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.connect((self.host, self.port))
-        print(f"[Client] Connected to FicTrac at {self.host}:{self.port}")
+        try:
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.sock.bind((self.host, self.port))
+            self.sock.setblocking(0)
+            print(f"[Client] Connected to FicTrac at {self.host}:{self.port}")
+
+            # Log the connection event with NaNs for all FicTrac fields and timestamp only
+            nan_row = [math.nan] * 24  # 24 fields expected from FicTrac
+            python_ts = time.time()
+            data_row = nan_row + [python_ts, "CONNECTED"]
+            if self.queue:
+                self.queue.put(data_row)
+            return True
+        except ConnectionRefusedError:
+            print(f"[Client] Error: Could not connect to FicTrac at {self.host}:{self.port}")
+            print("[Client] Please ensure that:")
+            print("1. FicTrac is running")
+            print("2. The correct host and port are specified in config.yaml")
+            print("3. There are no firewall restrictions blocking the connection")
+            if self.stop_event:
+                self.stop_event.set()  # Signal to stop the main process
+            return False
+        except Exception as e:
+            print(f"[Client] Unexpected error while connecting: {str(e)}")
+            if self.stop_event:
+                self.stop_event.set()  # Signal to stop the main process
+            return False
 
     def read_data(self):
         """
-        Continuously read from the socket, parse lines, and send structured data to the queue.
-        Handles multiple lines per read without dropping any data.
+        Read data from the socket, parse each line if it is a valid FicTrac output,
+        and optionally send it to a multiprocessing queue.
         """
         try:
-            while True:
+            while not self.stop_event.is_set():
                 if self.debug:
                     start_time = time.time()
 
-                # Read raw bytes from socket
+                # Receive data from the socket (blocking call)
                 new_data = self.sock.recv(1024)
                 if not new_data:
-                    break  # FicTrac closed the connection
+                    break  # Connection closed
+                
+                # Timestamp the exact moment the data is received
+                python_ts = time.time()
 
-                # Decode and append to internal buffer
+                # Accumulate received data into buffer
                 self.buffer += new_data.decode('UTF-8')
 
-                # === NEW: Process all complete lines ===
                 while True:
-                    endline = self.buffer.find("\n")
+                    endline = self.buffer.find("\n")  # Find end of one complete line
                     if endline == -1:
-                        break  # Wait for more data to complete the line
+                        break  # No full line yet
 
+                    # Extract and remove the line from the buffer
                     line = self.buffer[:endline]
                     self.buffer = self.buffer[endline + 1:]
 
+                    # Split the line into comma-separated tokens
                     toks = line.split(", ")
 
+                    # Ensure it's a valid FicTrac line with sufficient tokens
                     if (len(toks) < 24) or (toks[0] != "FT"):
                         print('[Client] Bad read')
                         continue
 
-                    # === Parse data ===
-                    cnt      = int(toks[1])
-                    dr_cam   = [float(toks[2]), float(toks[3]), float(toks[4])]
-                    err      = float(toks[5])
-                    dr_lab   = [float(toks[6]), float(toks[7]), float(toks[8])]
-                    r_cam    = [float(toks[9]), float(toks[10]), float(toks[11])]
-                    r_lab    = [float(toks[12]), float(toks[13]), float(toks[14])]
-                    posx     = float(toks[15])
-                    posy     = float(toks[16])
-                    heading  = float(toks[17])
+                    # Parse relevant fields
+                    cnt = int(toks[1])
+                    dr_cam = [float(toks[2]), float(toks[3]), float(toks[4])]
+                    err = float(toks[5])
+                    dr_lab = [float(toks[6]), float(toks[7]), float(toks[8])]
+                    r_cam = [float(toks[9]), float(toks[10]), float(toks[11])]
+                    r_lab = [float(toks[12]), float(toks[13]), float(toks[14])]
+                    posx = float(toks[15])
+                    posy = float(toks[16])
+                    heading = float(toks[17])
                     step_dir = float(toks[18])
                     step_mag = float(toks[19])
-                    intx     = float(toks[20])
-                    inty     = float(toks[21])
-                    ts       = float(toks[22])
-                    seq      = int(toks[23])
+                    intx = float(toks[20])
+                    inty = float(toks[21])
+                    ts = float(toks[22])
+                    seq = int(toks[23])
 
+                    # Final row includes FicTrac fields + Python timestamp + status field
                     data_row = [
                         cnt, *dr_cam, err, *dr_lab, *r_cam, *r_lab,
                         posx, posy, heading, step_dir, step_mag,
-                        intx, inty, ts, seq
+                        intx, inty, ts, seq,
+                        python_ts, "DATA"
                     ]
 
+                    # Send parsed data to queue if provided
                     if self.queue:
                         self.queue.put(data_row)
 
+                    # Record loop timing if debugging
                     if self.debug:
                         end_time = time.time()
                         self.loop_times.append(end_time - start_time)
 
         finally:
+            # Always close the socket on exit
             self.sock.close()
+            # Optional: gracefully terminate FicTrac (disabled by default)
+            # self.kill_fictrac_gracefully()
             print("[Client] Connection closed.")
 
+            # Print performance stats if debugging
             if self.debug and self.loop_times:
                 times = np.array(self.loop_times)
                 avg = np.mean(times)
                 std = np.std(times)
                 print(f"[Timing] Loops: {len(times)} | Avg: {avg:.6f} s | Std: {std:.6f} s")
 
-
     def run(self):
         """
-        Connect to the server and begin reading data.
+        Entry point to start the client: connect and start reading data.
         """
-        self.connect()
-        self.read_data()
+        if self.connect():
+            self.read_data()
+        else:
+            print("[Client] Exiting due to connection failure")
+
+    def kill_fictrac_gracefully(self, wkill_path=r"C:\ProgramData\chocolatey\lib\windows-kill\tools\windows-kill_x64_1.1.4_lib_release\windows-kill.exe"):
+        """
+        Attempt to send SIGINT to FicTrac using windows-kill if it is still running.
+        """
+        try:
+            # Check if fictrac.exe is running
+            result = subprocess.check_output('tasklist | findstr /i "fictrac.exe"', shell=True, text=True)
+            lines = result.strip().splitlines()
+
+            for line in lines:
+                parts = line.split()
+                if len(parts) >= 2:
+                    pid = parts[1]  # Extract process ID
+                    print(f"[Client] Sending SIGINT to FicTrac (PID {pid})...")
+                    try:
+                        # Use windows-kill to send SIGINT to the process
+                        subprocess.run(f'"{wkill_path}" -SIGINT {pid}', shell=True, timeout=2)
+                        print("[Client] SIGINT sent to FicTrac.")
+                    except subprocess.TimeoutExpired:
+                        print("[Client] windows-kill timed out. FicTrac may not have exited.")
+                else:
+                    print("[Client] Could not parse tasklist output.")
+        except subprocess.CalledProcessError:
+            print("[Client] FicTrac not running or could not find fictrac.exe.")
