@@ -2,6 +2,9 @@ duration: 12
 use_fictrac: false  # Set to true to enable FicTrac integration
 debug: false  # Global debug flag - enables detailed output for all processes
 
+# Display settings
+projector_width_pixels: 1280  # Width of the projected image in pixels that matches the bowl setup
+
 # Noise pattern settings
 noise:
   framerate: 13  # Frames per second

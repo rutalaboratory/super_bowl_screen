@@ -10,13 +10,14 @@ from bowl_stimulate_class import *
 
 if __name__ == "__main__":
     # Load and parse configuration
-    with open("config.yaml", 'r') as file:
+    with open("config/config.yaml", 'r') as file:
         config = yaml.safe_load(file)
 
     # Extract configuration with defaults
     duration = config["duration"]
     debug = config.get("debug", False)
-    
+    projector_width_pixels = config.get("projector_width_pixels", 1280)
+
     # Get noise settings with defaults
     noise = config.get("noise", {})
     noise_config = {
@@ -65,20 +66,22 @@ if __name__ == "__main__":
 
     # Get monitor information
     monitors = get_monitors()
- 
-    img_offsetx = monitors[0].width + monitors[1].width
-    img_offsety = monitors[0].height + monitors[1].height
+    
+    monitor_resolution = (monitors[0].width, monitors[0].height)
+    projector_resolution = (monitors[1].width, monitors[1].height)
+
     print(f"[Main] Monitor setup detected: {len(monitors)} monitors")
-    print(f"[Main] Using offsets: x={img_offsetx}, y={img_offsety}")
 
     # Run the stimulus
     print(f"[Main] Running stimulus for {duration} seconds...")
-    Arena = Stimulation_Pipeline(
-        img_offsetx=img_offsetx,
-        img_offsety=img_offsety,
-        fov_ele=(0,140), 
-        debug=debug
-    )
+    Arena = Stimulation_Pipeline(img_size=(360, 720,3),
+                                fov_azi=(0,180), 
+                                fov_ele=(0,140),
+                                monitor_resolution=monitor_resolution,
+                                projector_resolution=projector_resolution,
+                                name = "Arena",
+                                projector_width_pixels=projector_width_pixels,
+                                debug=False)
     
     noise = ShowNoise(
         Arena, 

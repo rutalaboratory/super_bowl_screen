@@ -14,7 +14,14 @@ class Stimulation_Pipeline():
     and manages the display window positioning and timing.
     """
     
-    def __init__(self,img_size=(360, 720,3), fov_azi=(0,180), fov_ele=(15,140),img_offsetx=3840+3240,img_offsety=2400,name = "Arena", projector_width_pixels=1280, debug=False):
+    def __init__(self,img_size=(360, 720,3),
+                  fov_azi=(0,180), 
+                  fov_ele=(15,140),
+                  monitor_resolution=(1920, 1080),
+                  projector_resolution=(1280, 720),
+                  name = "Arena",
+                  projector_width_pixels=1280, 
+                  debug=False):
         """
         Initialize the stimulus projection system.
 
@@ -29,30 +36,62 @@ class Stimulation_Pipeline():
         """
         self.debug = debug
         
+        self.image_width = img_size[1]  # Width of the image in pixels
+        self.image_height = img_size[0]  # Height of the image in pixels
+
+        self.azimuthal_maximum = fov_azi[1]  # Maximum azimuthal angle in degrees
+        self.azimuthal_minimum = fov_azi[0]  # Minimum azimuthal angle in degrees
+
+        self.elevation_maximum = fov_ele[1]  # Maximum elevation angle in degrees
+        self.elevation_minimum = fov_ele[0]  # Minimum elevation angle in degrees
+
         # Calculate how many pixels we need for the given field of view
         # For example, if we want to show 180 degrees in 720 pixels, each degree needs 4 pixels
-        azi_pix = int(img_size[1]/360*fov_azi[1])  # Pixels needed for azimuth (horizontal) view
-        ele_pix = int(img_size[0]/180*fov_ele[1])  # Pixels needed for elevation (vertical) view
-    
+        # The sphere wraps around 360 degrees horizontally and 180 degrees vertically
+        azi_pix = int((self.image_width/360) * self.azimuthal_maximum)  # Pixels per degree in azimuth
+        ele_pix = int((self.image_height/180) * self.elevation_maximum)  # Pixels per degree in elevation
+
+        if self.debug: 
+            print(azi_pix, ele_pix)
+
         # Store pixel dimensions for later use
         self.azi_pix = azi_pix  # Width in pixels
         self.ele_pix = ele_pix  # Height in pixels
         
         # Store image dimensions and calculate resolution (degrees per pixel)
-        self.xdim = img_size[1]  # Image width
-        self.ydim = img_size[0]  # Image height
-        self.resolution = np.array([1/(self.ele_pix/fov_ele[1]),1/(self.azi_pix/fov_azi[1])])  # Degrees per pixel
+        self.xdim = self.image_width  # Image width
+        self.ydim = self.image_height  # Image height
+
+        # Calculate resolution in degrees per pixel
+        self.resolution = np.array([1/(self.ele_pix/self.elevation_maximum),
+                                    1/(self.azi_pix/self.azimuthal_maximum)])  # Degrees per pixel
+        print("Pixel Resolution (degrees per pixel) (x, y): ", self.resolution)
+
         self.image_size = img_size  # Full image size including color channels
         
         # Create a blank image buffer for stimulus generation
         self.dest = np.zeros(img_size,dtype = "uint8")
         
         # Initialize the components that handle stimulus generation and projection
-        self.Stimulus = Stimulus(self.dest.shape)  # Handles stimulus creation and rotation
-        
+        self.Stimulus = Stimulus(img_size=img_size, 
+                                 fov_azi=fov_azi, 
+                                 fov_ele=fov_ele)  # Handles stimulus creation and rotation
+
         # Set up projector parameters (this handles the bowl-shape distortion)
-        self.Projector_1 = Projector()
-        self.Projector_1.initialize_projection_matrix((ele_pix,azi_pix),fov_azi,fov_ele)
+        # proj_x is the width of the projected image that fits the bowl
+        # proj_y is half the width to maintain aspect ratio
+        # Here we assume a 2:1 aspect ratio for the bowl projection
+
+        self.Projector_1 = Projector(res_x=projector_resolution[0],
+                                     res_y=projector_resolution[1],
+                                     proj_x=projector_width_pixels,
+                                     proj_y=int(projector_width_pixels/2),
+                                     fov_azi=fov_azi,
+                                     fov_ele=fov_ele)
+
+        self.Projector_1.initialize_projection_matrix((ele_pix,azi_pix),
+                                                      fov_azi,
+                                                      fov_ele)
         
         # Initialize timing variables for stimulus presentation
         self.dt = 0          # Time elapsed since start
@@ -65,8 +104,8 @@ class Stimulation_Pipeline():
         # This creates a window on the second monitor at the specified position
 
         self.WINDOW_NAME = name          # Name of the window
-        self.width_first = img_offsetx   # X position of window (usually on second monitor)
-        self.height_first = img_offsety  # Y position of window
+        self.width_first = monitor_resolution[0] + projector_resolution[0]   # X position of window (usually on second monitor)
+        self.height_first = monitor_resolution[1] + projector_resolution[1]   # Y position of window
         
         # Create and position the window
         cv2.namedWindow(self.WINDOW_NAME, cv2.WINDOW_NORMAL)  # Create a resizable window
