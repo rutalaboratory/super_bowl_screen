@@ -1,0 +1,20 @@
+# Images
+*.[Jj][Pp][Gg]
+*.[Pp][Nn][Gg]
+
+# Video
+*.[Mm][Pp]4
+*.[Mm][Oo][Vv]
+
+# HDF5 data
+*.[Hh][Dd][Ff]5
+
+# CSV
+*.csv
+
+# Python bytecode
+*.pyc
+
+# Folder
+noise_patterns/
+  

@@ -1,0 +1,21 @@
+duration: 12
+use_fictrac: false  # Set to true to enable FicTrac integration
+debug: false  # Global debug flag - enables detailed output for all processes
+
+# Noise pattern settings
+noise:
+  framerate: 13  # Frames per second
+  pixel_size: 5  # Size of noise pixels
+  save_path: "noise_patterns"  # Directory where frames will be saved
+
+# FicTrac settings (only used if use_fictrac is true)
+fictrac:
+  host: "127.0.0.1"
+  port: 3000
+  output_csv: "fictrac.csv"
+
+moving_dot:
+  elevation: 70
+  elevation_width: 5
+  azi_limits: [0, 180]
+  speed: 50
