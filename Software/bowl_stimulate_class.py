@@ -272,13 +272,18 @@ class Stimulation_Pipeline():
         #plt.plot(linear,dts-linear)
      
         
-    def generate(self,function,duration=0,rot_offset=(0,0,0),*args, **kwargs):
-        
-        # the "generate" function creates a start time and manages runtime and timing it  uses an online generated texture to project it onto the projector.
-        # function is an input function or object, which generates online textures, which are then projected.
-        # once generate is called in the main loop the insered function/or object is initialized. Afterwards the Code in the generate function is executed
-        # in the While loop, the function is called and args and kwargs are transfered.
-        
+    def generate(self, function, duration=0, rot_offset=(0,0,0), save_queue=None, *args, **kwargs):
+        """
+        Display frames produced by `function` for `duration` seconds, projecting them to the bowl.
+        While running, save for each displayed frame:
+        - the raw frame returned by `function` (Input_im),
+        - the display timestamp (taken immediately after cv2.waitKey),
+        - a sequential frame number (0-based).
+
+        Pass your queue like:
+            Arena.generate(noise.run, duration=..., rot_offset=(0,0,0), save_queue=noise_queue)
+        """
+        # Pre-run trigger/dark screens just like before
         self.show_trigger()
         self.show_dark_screen(0.1)
         fpss = np.array([])
@@ -287,34 +292,63 @@ class Stimulation_Pipeline():
         self.show_dark_screen(0.1)
         self.show_trigger()
         self.time_start = time.time()
-        
+
+        # Local counter for saved frame numbers
+        saved_frame_idx = 0
+
         while time.time() < self.time_start + duration:
+            # Get the next frame from the generator/callback
             Input_im = function(*args, **kwargs)
-            
-            if(len(Input_im.shape)<3):
+
+            # Ensure 3 channels for projection
+            if len(Input_im.shape) < 3:
                 resized = cv2.cvtColor(Input_im, cv2.COLOR_GRAY2RGB)
             else:
                 resized = Input_im
-            if (rot_offset == (0,0,0)):
+
+            # Optional static rotation offset
+            if rot_offset == (0, 0, 0):
                 rotated = resized
             else:
-                rotated = self.Stimulus.rot_equi_img(resized,self.dest,rot_offset[0],rot_offset[1],rot_offset[2])
-                
-            croped =  (rotated)
-            masked = self.Projector_1.project_image(croped)
+                rotated = self.Stimulus.rot_equi_img(resized, self.dest, rot_offset[0], rot_offset[1], rot_offset[2])
+
+            # Project to bowl and show
+            cropped = select_fov(rotated)
+            masked = self.Projector_1.project_image(cropped)
             output = self.Projector_1.mask_image(masked)
-            cv2.imshow(self.WINDOW_NAME,output)
-            tick = cv2.getTickCount()-timer
-            fps = cv2.getTickFrequency()/(tick)
+            cv2.imshow(self.WINDOW_NAME, output)
+            
+            timestamp =  time.perf_counter_ns()  # Timestamp in nanoseconds
+
+            # Update FPS stats
+            tick = cv2.getTickCount() - timer
+            fps = cv2.getTickFrequency() / (tick)
             timer = cv2.getTickCount()
-            fpss = np.append(fpss,fps)
-            key = cv2.waitKey(1)#pauses for 1ms seconds before fetching next image
-            if key == 27:#if ESC is pressed, exit loop
+            fpss = np.append(fpss, fps)
+
+            # Let OpenCV update the window; time *after* this approximates display time
+            key = cv2.waitKey(1)
+
+            if self.debug:
+                print('[Generate] Frame', saved_frame_idx, 'at', timestamp, 'ns')
+            
+            # ---- Save data here  ----
+            if save_queue is not None:
+                save_queue.put({
+                    'original_image': Input_im.copy() if hasattr(Input_im, 'copy') else Input_im,
+                    'bowl_image': output.copy() if hasattr(output, 'copy') else output,
+                    'timestamp': timestamp,
+                    'frame_number': saved_frame_idx
+                })
+                saved_frame_idx += 1
+
+            if key == 27:  # ESC to exit early
                 cv2.destroyAllWindows()
                 break
+
         self.show_trigger()
         self.show_dark_screen(0.1)
-        print(f"Average Loop FPS: {np.mean(fpss):.1f}, Total frames: {self.frames}")
+        print(f"[Image Generator] Average Loop FPS: {np.mean(fpss):.1f}, Total frames displayed: {saved_frame_idx}, Total frames generated: {self.frames}")
         
         
     def looming_disk(self,radius,speed,distance,color_disc,color_bg,center=None):
@@ -421,59 +455,6 @@ class ShowVideo():
         resized = cv2.resize(frame,self.arena.image_size[0:2], interpolation = cv2.INTER_AREA)
         self.arena.oldframe = frame
         return resized
-    
-# class MovingDotAzimuthal():
-    
-#     def __init__(self, arena, elevation=90, elevation_width=5, azi_limits=(30,150), speed=20):
-#         self.arena = arena
-#         self.elevation = elevation
-#         self.elevation_width = elevation_width
-#         self.azi_min, self.azi_max = azi_limits
-#         self.speed = speed  # degrees/sec
-#         self.direction = 1  # 1 for right, -1 for left
-
-#         # calculate pixel radius based on elevation width
-#         self.pixel_radius = int((elevation_width / 2) / self.arena.resolution[0])
-
-#         # fixed pixel y position based on elevation
-#         self.y = int((1 - (elevation - self.arena.Projector_1.fov_ele[0]) /
-#                     (self.arena.Projector_1.fov_ele[1] - self.arena.Projector_1.fov_ele[0])) * self.arena.ydim)
-
-#         # start at min azimuth
-#         self.azi = self.azi_min
-#         self.last_update_time = time.time()
-#         self.pic = np.full((self.arena.ydim, self.arena.xdim, 3), 255, dtype=np.uint8)  # white background
-
-
-#     def run(self):
-#         current_time = time.time()
-#         dt = current_time - self.last_update_time
-#         self.last_update_time = current_time
-
-#         # Update azimuth based on speed and direction
-#         self.azi += self.speed * dt * self.direction
-
-#         # Reflect direction if hitting bounds
-#         if self.azi >= self.azi_max:
-#             self.azi = self.azi_max
-#             self.direction = -1
-#         elif self.azi <= self.azi_min:
-#             self.azi = self.azi_min
-#             self.direction = 1
-
-#         # Calculate x position in pixels
-#         x = int((self.azi - self.arena.Projector_1.fov_azi[0]) /
-#                 (self.arena.Projector_1.fov_azi[1] - self.arena.Projector_1.fov_azi[0]) * self.arena.xdim)
-
-#         # Reset image
-#         self.pic[:, :, :] = 255  # white background
-#         cv2.circle(self.pic, (x, self.y), self.pixel_radius, (0, 0, 0), -1)
-
-#         return self.pic
-
-import numpy as np
-import cv2
-import time
 
 import numpy as np
 import cv2
@@ -564,11 +545,6 @@ class MovingDotAzimuthal:
         cv2.circle(self.pic, (x, y), self.pixel_radius, (0, 0, 0), -1)
 
         return self.pic
-
-
-import numpy as np
-import time
-import cv2
 
 class MovingDotElevation():
 
@@ -672,7 +648,6 @@ class ShowNoise():
         self.debug = debug
         self.arena = arena
         self.save_queue = save_queue
-        self.total_frames_generated = 0  # Track total frames generated
         xdim = self.arena.xdim
         ydim = self.arena.ydim
         
@@ -698,58 +673,52 @@ class ShowNoise():
         timer = cv2.getTickCount()
         print("DEBUG", xdim, ydim, self.x_noise, self.y_noise)
 
+    # In class ShowNoise (bowl_stimulate_class.py)
     def run(self):
         """
-        Generate and display the next frame of noise.
-        This function is called repeatedly to create the animated noise effect.
+        Generate and return the next frame of noise.
         """
         # Calculate when the next frame should be shown based on the desired framerate
-        theoretical_elapsed_time = self.arena.frames * (1/self.framerate)
+        theoretical_elapsed_time = self.arena.frames * (1 / self.framerate)
         self.arena.dt = time.time() - self.arena.time_start
-        
+
         # Print timing info every 60 frames
         if self.arena.frames % 60 == 0 and self.debug:
             timing_diff = self.arena.dt - theoretical_elapsed_time
             print(f"[Timing] Frame {self.arena.frames}: Real time={self.arena.dt:.3f}s, "
-                  f"Theoretical={theoretical_elapsed_time:.3f}s, "
-                  f"Diff={timing_diff*1000:.1f}ms")
-        
+                f"Theoretical={theoretical_elapsed_time:.3f}s, "
+                f"Diff={timing_diff*1000:.1f}ms")
+
         # If it's time for a new frame...
         if self.arena.dt >= theoretical_elapsed_time:
             # Create a new random noise pattern
-            # First make small random black and white pixels
             Input_im = (np.random.randint(0, 2, (int(self.y_noise), int(self.x_noise), 1)) * 255).astype("uint8")
-            
-            # Convert the black and white image to RGB format
+
+            # Convert to RGB and scale to arena size
             image = cv2.cvtColor(Input_im, cv2.COLOR_GRAY2RGB)
-            
-            # Resize the noise to fill the entire screen
-            resized = cv2.resize(image, dsize=(self.arena.xdim, self.arena.ydim), interpolation=cv2.INTER_AREA)
-            self.pic = resized
-            
+            resized = cv2.resize(image,dsize=(self.arena.azi_pix, self.arena.ele_pix), interpolation = cv2.INTER_AREA)
+
+            self.pic[0:280,180:540,:]= resized
+            # cv2.imshow("noise",self.pic)
+
+            # resized = cv2.resize(image, dsize=(self.arena.azi_pix, self.arena.ele_pix), interpolation=cv2.INTER_AREA)
+            # self.pic[0:280, 180:540, :] = resized  # center the noise in the bowl
+
+            # cv2.imshow("Noise Debug", self.pic)
+
+            # key = cv2.waitKey(1)
+
             # Count this frame
             self.arena.frames += 1
-            self.total_frames_generated += 1
-            
-            # Send frame to save queue if enabled
-            if self.save_queue is not None and self.total_frames_generated <= self.arena.frames:
-                frame_metadata = {
-                    'timestamp': time.time(),
-                    'frame_number': self.total_frames_generated - 1,  # 0-based frame numbers
-                    'frame_data': self.pic.copy()
-                }
-                self.save_queue.put(frame_metadata)
-                self.saved_frames += 1
-                if self.saved_frames % 60 == 0 and self.debug:
-                    print(f"[Frames] Generated={self.total_frames_generated}, Saved={self.saved_frames}")
         else:
             # If it's not time for a new frame yet, show the previous frame
             self.pic = self.arena.oldframe
-        
+
         # Remember this frame for the next iteration
         self.arena.oldframe = self.pic
-        
+
         return self.pic
+
     
 
 class ShowVerticalEdge():
@@ -785,3 +754,114 @@ class ShowVerticalEdge():
     
  ######################################### UNTESTED ###########################################
 
+import numpy as np
+import cv2
+import time
+
+class ShowPattern():
+    """
+    This class creates a visual stimulus that displays a deterministic pattern 
+    of colored stripes on the projection screen. The stripes are repeatable and 
+    predictable, unlike random noise.
+    """
+    
+    def __init__(self, arena, pixelsize, framerate=30, save_queue=None, debug=False, 
+                 orientation="vertical", moving=False):
+        """
+        Set up the stripe stimulus with the given parameters.
+        
+        Args:
+            arena: The projection environment where the stimulus will be shown
+            pixelsize: Size of each stripe element (larger = thicker stripes)
+            framerate: How many times per second the pattern updates (default: 30Hz)
+            save_queue: Optional multiprocessing queue to save generated patterns
+            orientation: "vertical" or "horizontal" stripes
+            moving: If True, stripes will shift across frames
+        """
+        self.debug = debug
+        self.arena = arena
+        self.save_queue = save_queue
+        self.orientation = orientation
+        self.moving = moving
+        
+        xdim = self.arena.xdim
+        ydim = self.arena.ydim
+        
+        self.pic = np.zeros([ydim, xdim, 3], dtype="uint8")
+        
+        # How many "cells" based on pixelsize
+        self.y_cells = int(self.arena.ele_pix * self.arena.resolution[0] / pixelsize)  
+        self.x_cells = int(self.arena.azi_pix * self.arena.resolution[1] / pixelsize)  
+        
+        # Initialize frame counting and timing
+        self.arena.frames = 0
+        self.framerate = framerate
+        print("video framerate =", framerate)
+        print("y cells = ", self.y_cells, " x cells = ", self.x_cells)
+        
+        print("DEBUG", xdim, ydim, self.x_cells, self.y_cells)
+
+        # Define a repeating sequence of colors (BGR for OpenCV)
+        self.colors = [
+            (255, 0, 0),     # Blue
+            (0, 255, 0),     # Green
+            (0, 0, 255),     # Red
+            (0, 255, 255),   # Yellow
+            (255, 0, 255),   # Magenta
+            (255, 255, 0)    # Cyan
+        ]
+
+    def _generate_stripes(self, frame_idx):
+        """
+        Create colored stripes (vertical or horizontal).
+        If moving=True, shift the stripe pattern each frame.
+        """
+        pattern = np.zeros((self.y_cells, self.x_cells, 3), dtype="uint8")
+        
+        if self.orientation == "vertical":
+            for j in range(self.x_cells):
+                color_idx = (j + (frame_idx if self.moving else 0)) % len(self.colors)
+                pattern[:, j, :] = self.colors[color_idx]
+        
+        elif self.orientation == "horizontal":
+            for i in range(self.y_cells):
+                color_idx = (i + (frame_idx if self.moving else 0)) % len(self.colors)
+                pattern[i, :, :] = self.colors[color_idx]
+        else:
+            raise ValueError("orientation must be 'vertical' or 'horizontal'")
+        
+        return pattern
+
+    def run(self):
+        """
+        Generate and return the next frame of deterministic colored stripes.
+        """
+        theoretical_elapsed_time = self.arena.frames * (1 / self.framerate)
+        self.arena.dt = time.time() - self.arena.time_start
+
+        if self.arena.frames % 60 == 0 and self.debug:
+            timing_diff = self.arena.dt - theoretical_elapsed_time
+            print(f"[Timing] Frame {self.arena.frames}: Real time={self.arena.dt:.3f}s, "
+                f"Theoretical={theoretical_elapsed_time:.3f}s, "
+                f"Diff={timing_diff*1000:.1f}ms")
+
+        if self.arena.dt >= theoretical_elapsed_time:
+            # Generate stripes
+            pattern = self._generate_stripes(self.arena.frames)
+
+            # Resize to arena
+            resized = cv2.resize(pattern, dsize=(self.arena.azi_pix, self.arena.ele_pix), 
+                                 interpolation=cv2.INTER_NEAREST)
+
+            # Place in display area
+            self.pic[0:280, 180:540, :] = resized
+
+            self.arena.frames += 1
+        else:
+            self.pic = self.arena.oldframe
+
+        cv2.imshow("Pattern Debug", self.pic)
+        key = cv2.waitKey(1)    
+        self.arena.oldframe = self.pic
+
+        return self.pic

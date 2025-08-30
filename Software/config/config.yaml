@@ -1,15 +1,22 @@
-duration: 12
+duration: 600 # duration for running the script in seconds
 use_fictrac: false  # Set to true to enable FicTrac integration
 debug: false  # Global debug flag - enables detailed output for all processes
+send_hardware_trigger: true  # Whether to send a hardware trigger to the 2P Microscope at the start of the experiment
 
 # Display settings
-projector_width_pixels: 1280  # Width of the projected image in pixels that matches the bowl setup
+# Width of the projected image in pixels that matches the bowl setup, i.e if the projected image's width matches the bowl's width,
+# you are using all 1280 pixels along the width for stimulus presentation (for a 1280x720 projector)
+projector_width_pixels: 1280  
+
+# Arduino settings
+arduino_port: "COM3"  # Serial port for Arduino communication
+arduino_baudrate: 9600  # Baud rate for Arduino communication
 
 # Noise pattern settings
 noise:
-  framerate: 13  # Frames per second
-  pixel_size: 5  # Size of noise pixels
-  save_path: "noise_patterns"  # Directory where frames will be saved
+  framerate: 60  # The number of frames refreshes (in Hz) (new noise pattern generated)
+  pixel_size: 10  # Size of noise pixels in degrees (the bowl is 140 degrees in elevation and 180 degrees in azimuth)
+  save_path: "C:\\Users\\theru\\jrhee\\data\\stest_data"  # Directory where frames will be saved
 
 # FicTrac settings (only used if use_fictrac is true)
 fictrac:
@@ -17,8 +24,8 @@ fictrac:
   port: 3000
   output_csv: "fictrac.csv"
 
-moving_dot:
-  elevation: 70
-  elevation_width: 5
-  azi_limits: [0, 180]
-  speed: 50
+# moving_dot:
+#   elevation: 70
+#   elevation_width: 5
+#   azi_limits: [0, 180]
+#   speed: 50

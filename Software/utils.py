@@ -29,76 +29,94 @@ def csv_writer(queue, csv_path):
             writer.writerow(row)
     print("[Writer] CSV writing complete and file closed.")
 
-def noise_pattern_writer(queue, base_path="noise_patterns", debug=False):
+
+import os
+import time
+import h5py
+from queue import Empty as QueueEmpty
+
+
+def noise_pattern_writer(queue, base_path="noise_patterns", run_tag="test", debug=False, flush_interval=100):
     """
-    Save noise patterns from a queue to HDF5 file.
+    Continuously saves noise pattern frames from a queue into an HDF5 file.
+    Exits only after receiving the 'STOP' sentinel so late frames aren't lost.
     
     Args:
-        queue: Multiprocessing queue containing noise pattern frames
-        base_path: Base directory to save the patterns
-        debug: Enable debug output (frame timing info, etc.)
+        queue: A Queue providing frame data as dicts with keys:
+               'timestamp', 'frame_number', 'original_image', 'bowl_image'.
+        base_path (str): Directory where the .h5 file will be created.
+        run_tag (str): Tag used in the filename.
+        debug (bool): If True, print progress logs.
+        flush_interval (int): How often (in frames) to flush data to disk.
     """
-    # Add a small delay to let processes initialize
+
+    # Small startup delay to let the producer warm up
     time.sleep(0.1)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
-    # Create directory if it doesn't exist
+
+    # Prepare file path and ensure output directory exists
     os.makedirs(base_path, exist_ok=True)
-    
-    # Create HDF5 file
-    filename = f"noise_patterns_{timestamp}.h5"
-    filepath = os.path.join(base_path, filename)
-    print(f"[NoiseWriter] Starting noise pattern writer at {filepath}")
-    
+    filepath = os.path.join(base_path, f"noise_patterns_{run_tag}.h5")
+    print(f"[NoiseWriter] Writing noise patterns to {filepath}")
+
     frame_count = 0
+
+    # Open HDF5 file for writing
     with h5py.File(filepath, 'w') as f:
-        # Create datasets to store frames and metadata
-        # We'll create these with maxshape=(None,) to allow resizing
-        frames_group = f.create_group('frames')
-        timestamps_ds = f.create_dataset('timestamps', (0,), maxshape=(None,), dtype='float64')
-        frame_numbers_ds = f.create_dataset('frame_numbers', (0,), maxshape=(None,), dtype='int32')
-        
+        # Groups for images
+        original_images = f.create_group('original_images')
+        bowl_images = f.create_group('bowl_images')
+
+        # Datasets for metadata (timestamps, frame numbers)
+        timestamps = f.create_dataset('timestamps', (0,), maxshape=(None,), dtype='int64')
+        frame_numbers = f.create_dataset('frame_numbers', (0,), maxshape=(None,), dtype='int32')
+
         while True:
             try:
-                # Use timeout to prevent hanging if main process dies
-                data = queue.get(timeout=5)
-                
-                if data == "STOP":
-                    # Just exit, we've processed all frames already
-                    break
-                
-                # Process normal frame
-                frame_metadata = data
-                timestamp = frame_metadata['timestamp']
-                frame_number = frame_metadata['frame_number']
-                frame = frame_metadata['frame_data']
-                
-                # Store the frame and metadata
-                current_size = timestamps_ds.shape[0]
-                new_size = current_size + 1
-                timestamps_ds.resize((new_size,))
-                frame_numbers_ds.resize((new_size,))
-                
-                frame_name = f'frame_{frame_number:06d}'  # Use actual frame number instead of count
-                try:
-                    frames_group.create_dataset(frame_name, data=frame, compression='gzip', compression_opts=1)
-                    timestamps_ds[current_size] = timestamp
-                    frame_numbers_ds[current_size] = frame_number
-                except ValueError as e:
-                    if "name already exists" in str(e):
-                        print(f"[NoiseWriter] Warning: Frame {frame_number} already exists, skipping...")
-                        continue
-                    else:
-                        raise e
-                
-                frame_count += 1
-                
-                if frame_count % 100 == 0 and debug:
-                    print(f"[NoiseWriter] Saved {frame_count} frames")
-                    f.flush()  # Periodically flush to disk
-                    
+                # Wait up to 1s for next frame
+                data = queue.get(timeout=1.0)
             except QueueEmpty:
-                print("[NoiseWriter] Timeout waiting for data, ensuring all frames are saved...")
+                # No new frame yet → keep waiting
+                continue
+
+            # Stop condition
+            if data == "STOP":
+                if debug:
+                    print(f"[NoiseWriter] Received STOP after {frame_count} frames")
+                f.flush()  # Final flush
                 break
-    
-    print(f"[NoiseWriter] Completed saving {frame_count} frames to {filepath}")
+
+            # Extract frame metadata
+            ts = data['timestamp']
+            num = data['frame_number']
+            orig = data['original_image']
+            bowl = data['bowl_image']
+
+            # Expand metadata datasets by 1 and save values
+            i = timestamps.shape[0]
+            timestamps.resize((i + 1,))
+            frame_numbers.resize((i + 1,))
+            timestamps[i], frame_numbers[i] = ts, num
+
+            # Save images under unique names
+            frame_name = f'frame_{num:06d}'
+            try:
+                original_images.create_dataset(frame_name, data=orig, compression='gzip', compression_opts=1)
+                bowl_images.create_dataset(frame_name, data=bowl, compression='gzip', compression_opts=1)
+            except ValueError as e:
+                if "name already exists" in str(e):
+                    if debug:
+                        print(f"[NoiseWriter] Warning: Frame {num} already exists, skipping")
+                    continue
+                raise  # Unexpected error → propagate
+
+            # Increment frame count
+            frame_count += 1
+
+            # Always flush every N frames for safety
+            if frame_count % flush_interval == 0:
+                f.flush()
+                if debug:
+                    print(f"[NoiseWriter] Flushed after {frame_count} frames")
+
+    print(f"[NoiseWriter] Finished saving {frame_count} frames to {filepath}")
+
