@@ -299,7 +299,7 @@ class Stimulation_Pipeline():
         fpss = np.array([])
         fps = 0
         timer = cv2.getTickCount()
-        # self.show_dark_screen(self.dark_screen_duration)
+        self.show_dark_screen(self.dark_screen_duration)
         #self.show_trigger()
         self.time_start = time.time()
 
