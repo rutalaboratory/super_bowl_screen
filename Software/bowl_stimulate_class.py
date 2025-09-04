@@ -21,6 +21,8 @@ class Stimulation_Pipeline():
                   projector_resolution=(1280, 720),
                   name = "Arena",
                   projector_width_pixels=1280, 
+                  arduino=None,
+                  dark_screen_duration=0.1,
                   debug=False):
         """
         Initialize the stimulus projection system.
@@ -36,6 +38,13 @@ class Stimulation_Pipeline():
         """
         self.debug = debug
         
+        # set the baseline period (dark screen) before the stimulus presentation
+        self.dark_screen_duration = dark_screen_duration
+
+        # initialize the arduino object
+        self.arduino = arduino
+        self.arduino_handshake_flag = False
+
         self.image_width = img_size[1]  # Width of the image in pixels
         self.image_height = img_size[0]  # Height of the image in pixels
 
@@ -99,6 +108,7 @@ class Stimulation_Pipeline():
         self.frames = 0      # Number of frames shown
         self.oldframe = 0    # Previous frame (used for timing)
         
+        self.is_new_frame = True  # Flag to indicate if a new frame was generated
 
         # Set up the display window for the stimulus
         # This creates a window on the second monitor at the specified position
@@ -284,21 +294,26 @@ class Stimulation_Pipeline():
             Arena.generate(noise.run, duration=..., rot_offset=(0,0,0), save_queue=noise_queue)
         """
         # Pre-run trigger/dark screens just like before
-        self.show_trigger()
-        self.show_dark_screen(0.1)
+        #self.show_trigger()
+        #self.show_dark_screen(0.1)
         fpss = np.array([])
         fps = 0
         timer = cv2.getTickCount()
-        self.show_dark_screen(0.1)
-        self.show_trigger()
+        # self.show_dark_screen(self.dark_screen_duration)
+        #self.show_trigger()
         self.time_start = time.time()
 
         # Local counter for saved frame numbers
         saved_frame_idx = 0
+        
+        # No handshake yet
+        last_handshake_time = None  
 
         while time.time() < self.time_start + duration:
             # Get the next frame from the generator/callback
             Input_im = function(*args, **kwargs)
+
+            # print("Timestamp after Image Received: ", time.perf_counter_ns())
 
             # Ensure 3 channels for projection
             if len(Input_im.shape) < 3:
@@ -312,13 +327,33 @@ class Stimulation_Pipeline():
             else:
                 rotated = self.Stimulus.rot_equi_img(resized, self.dest, rot_offset[0], rot_offset[1], rot_offset[2])
 
+            # print("Timestamp after Image Rotated: ", time.perf_counter_ns())
+
             # Project to bowl and show
             cropped = select_fov(rotated)
+
+            # print("Timestamp after Image Cropped: ", time.perf_counter_ns())
+
             masked = self.Projector_1.project_image(cropped)
-            output = self.Projector_1.mask_image(masked)
-            cv2.imshow(self.WINDOW_NAME, output)
             
+            # print("Timestamp after Image Projected: ", time.perf_counter_ns())
+
+            output = self.Projector_1.mask_image(masked)
+
+            # print("Timestamp after Image Masked: ", time.perf_counter_ns())
+
             timestamp =  time.perf_counter_ns()  # Timestamp in nanoseconds
+
+            cv2.imshow(self.WINDOW_NAME, output)
+
+           # Arduino Handshake 
+            self.arduino_handshake_flag = False
+            if self.arduino is not None:
+                handshake_interval = self.arduino.handshake_interval * 1e9  # ns
+                if last_handshake_time is None or (timestamp >= last_handshake_time + handshake_interval):
+                    self.arduino.handshake()
+                    self.arduino_handshake_flag = True
+                    last_handshake_time = timestamp
 
             # Update FPS stats
             tick = cv2.getTickCount() - timer
@@ -330,24 +365,26 @@ class Stimulation_Pipeline():
             key = cv2.waitKey(1)
 
             if self.debug:
-                print('[Generate] Frame', saved_frame_idx, 'at', timestamp, 'ns')
+                print('[Image Generator] Frame', saved_frame_idx, 'at', timestamp, 'ns')
             
             # ---- Save data here  ----
             if save_queue is not None:
                 save_queue.put({
-                    'original_image': Input_im.copy() if hasattr(Input_im, 'copy') else Input_im,
-                    'bowl_image': output.copy() if hasattr(output, 'copy') else output,
-                    'timestamp': timestamp,
-                    'frame_number': saved_frame_idx
-                })
+                'original_image': Input_im.copy() if hasattr(Input_im, 'copy') else Input_im,
+                'bowl_image': output.copy() if hasattr(output, 'copy') else output,
+                'timestamp': timestamp,
+                'frame_number': saved_frame_idx,
+                'is_new_frame': int(self.is_new_frame),  # 1 if new, 0 if reused
+                'arduino_handshake': int(self.arduino_handshake_flag)  # 1 if handshake sent, 0 if not
+            })
                 saved_frame_idx += 1
 
             if key == 27:  # ESC to exit early
                 cv2.destroyAllWindows()
                 break
 
-        self.show_trigger()
-        self.show_dark_screen(0.1)
+        # self.show_trigger()
+        # self.show_dark_screen(0.1)
         print(f"[Image Generator] Average Loop FPS: {np.mean(fpss):.1f}, Total frames displayed: {saved_frame_idx}, Total frames generated: {self.frames}")
         
         
@@ -634,7 +671,7 @@ class ShowNoise():
     frame rate to create dynamic visual noise.
     """
     
-    def __init__(self, arena, pixelsize, framerate=30, save_queue=None, debug=False):
+    def __init__(self, arena, pixelsize, framerate=30, debug=False):
         """
         Set up the noise stimulus with the given parameters.
         
@@ -642,12 +679,11 @@ class ShowNoise():
             arena: The projection environment where the stimulus will be shown
             pixelsize: Size of each noise pixel (larger numbers = bigger chunks of noise)
             framerate: How many times per second the noise pattern updates (default: 30Hz)
-            save_queue: Optional multiprocessing queue to save generated patterns
+            debug: Enable debug output
         """
         # Store reference to the arena for accessing screen dimensions and timing
         self.debug = debug
         self.arena = arena
-        self.save_queue = save_queue
         xdim = self.arena.xdim
         ydim = self.arena.ydim
         
@@ -689,6 +725,8 @@ class ShowNoise():
                 f"Theoretical={theoretical_elapsed_time:.3f}s, "
                 f"Diff={timing_diff*1000:.1f}ms")
 
+        self.arena.is_new_frame = False
+
         # If it's time for a new frame...
         if self.arena.dt >= theoretical_elapsed_time:
             # Create a new random noise pattern
@@ -699,17 +737,10 @@ class ShowNoise():
             resized = cv2.resize(image,dsize=(self.arena.azi_pix, self.arena.ele_pix), interpolation = cv2.INTER_AREA)
 
             self.pic[0:280,180:540,:]= resized
-            # cv2.imshow("noise",self.pic)
-
-            # resized = cv2.resize(image, dsize=(self.arena.azi_pix, self.arena.ele_pix), interpolation=cv2.INTER_AREA)
-            # self.pic[0:280, 180:540, :] = resized  # center the noise in the bowl
-
-            # cv2.imshow("Noise Debug", self.pic)
-
-            # key = cv2.waitKey(1)
 
             # Count this frame
             self.arena.frames += 1
+            self.arena.is_new_frame = True
         else:
             # If it's not time for a new frame yet, show the previous frame
             self.pic = self.arena.oldframe

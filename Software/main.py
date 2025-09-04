@@ -25,19 +25,22 @@ if __name__ == "__main__":
     duration = config["duration"]
     debug = config["debug"]
     projector_width_pixels = config["projector_width_pixels"]
+    dark_screen_duration = config["dark_screen_duration"]
 
     # Get noise settings with defaults
-    noise = config.get("noise", {})
+    noise = config["noise"]
     noise_config = {
-        "framerate": noise.get("framerate", 60),
-        "pixel_size": noise.get("pixel_size", 5),
-        "save_path": noise.get("save_path", "noise_patterns")
+        "framerate": noise["framerate"],
+        "pixel_size": noise["pixel_size"],
+        "save_path": noise["save_path"],
+        "file_name": noise["file_name"]
     }
     
     # Set up frame saving process
     noise_queue = Queue()
     save_path = noise_config["save_path"]
-    save_process = Process(target=noise_pattern_writer, args=(noise_queue, save_path, run_tag, debug))
+    file_name = noise_config["file_name"]
+    save_process = Process(target=noise_pattern_writer, args=(noise_queue, save_path, file_name, run_tag, debug))
     save_process.start()
 
     # Set up FicTrac if enabled
@@ -85,6 +88,20 @@ if __name__ == "__main__":
     fov_azi = (0, 180)
     fov_ele = (0, 140)
 
+    # Hardware trigger to the 2P Microscope
+
+    use_arduino = config["use_arduino"]
+    
+    if use_arduino:
+
+        # Initialize Arduino communication
+        port = config["arduino_port"]
+        baud_rate = config["arduino_baudrate"]
+        handshake_interval = config["arduino_handshake_interval"]
+
+        arduino = ArduinoCommunication(port=port, baud_rate=baud_rate, handshake_interval=handshake_interval)
+                
+
     # Run the stimulus
     print(f"[Main] Running stimulus for {duration} seconds...")
     Arena = Stimulation_Pipeline(img_size=img_size,
@@ -94,38 +111,32 @@ if __name__ == "__main__":
                                 projector_resolution=projector_resolution,
                                 name = "Arena",
                                 projector_width_pixels=projector_width_pixels,
+                                arduino=arduino,
+                                dark_screen_duration=dark_screen_duration,
                                 debug=False)
     
     noise = ShowNoise(Arena,
                     pixelsize=noise_config["pixel_size"],
                     framerate=noise_config["framerate"],
                     debug=debug)
-    
-    # Hardware trigger to the 2P Microscope
 
-    send_hardware_trigger = config["send_hardware_trigger"]
-    
-    if send_hardware_trigger:
-
-        # Send hardware trigger to the 2p Microscope
-        port = config["arduino_port"]
-        baud_rate = config["arduino_baudrate"]
-
-        arduino = ArduinoCommunication(port=port, baud_rate=baud_rate)
+    # Send trigger to 2P microscope
+    if use_arduino:
         hardware_trigger_2p = arduino.send_trigger()
 
-    # Run and save from inside generate()
+    # Run generate()
     Arena.generate(
         noise.run,
         duration=duration,
         rot_offset=(0, 0, 0),
-        save_queue=noise_queue,  # <-- saving now happens inside generate()
+        save_queue=noise_queue,  # <-- frame aving happens inside generate()
     )
 
     # --- Dump experimental parameters to JSON manifest ---
     experiment_data = {
         "duration_s": duration,
         "debug": debug,
+        "dark_screen_duration_s": dark_screen_duration,
         "monitor_resolution": {
             "width": monitor_resolution[0],
             "height": monitor_resolution[1],
@@ -139,6 +150,7 @@ if __name__ == "__main__":
             "framerate": noise_config["framerate"],
             "pixel_size": noise_config["pixel_size"],
             "save_path": noise_config["save_path"],
+            "file_name": noise_config["file_name"]
         },
         "use_fictrac": use_fictrac,
         "fictrac": (
@@ -159,8 +171,9 @@ if __name__ == "__main__":
         "arduino": {
             "port": port,
             "baud_rate": baud_rate,
+            "handshake_interval": handshake_interval,
             "hardware_trigger_2p_time": hardware_trigger_2p,
-        } if send_hardware_trigger else None,
+        } if use_arduino else None,
         # Helpful for matching JSON to saved frames on disk
         "outputs": {
             "noise_frames_dir": noise_config["save_path"],
@@ -173,7 +186,7 @@ if __name__ == "__main__":
     os.makedirs(experiment_data_dir, exist_ok=True)
 
     # Timestamped, human-readable filename
-    manifest_path = os.path.join(experiment_data_dir, f"experiment_data_{run_tag}.json")
+    manifest_path = os.path.join(experiment_data_dir, f"{run_tag}_experiment_config.json")
 
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(experiment_data, f, indent=2)

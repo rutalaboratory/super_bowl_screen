@@ -36,7 +36,7 @@ import h5py
 from queue import Empty as QueueEmpty
 
 
-def noise_pattern_writer(queue, base_path="noise_patterns", run_tag="test", debug=False, flush_interval=100):
+def noise_pattern_writer(queue, base_path="noise_patterns", file_name="noise_patterns", run_tag="test", debug=False, flush_interval=100):
     """
     Continuously saves noise pattern frames from a queue into an HDF5 file.
     Exits only after receiving the 'STOP' sentinel so late frames aren't lost.
@@ -55,7 +55,7 @@ def noise_pattern_writer(queue, base_path="noise_patterns", run_tag="test", debu
 
     # Prepare file path and ensure output directory exists
     os.makedirs(base_path, exist_ok=True)
-    filepath = os.path.join(base_path, f"noise_patterns_{run_tag}.h5")
+    filepath = os.path.join(base_path, f"{run_tag}_{file_name}.h5")
     print(f"[NoiseWriter] Writing noise patterns to {filepath}")
 
     frame_count = 0
@@ -66,17 +66,14 @@ def noise_pattern_writer(queue, base_path="noise_patterns", run_tag="test", debu
         original_images = f.create_group('original_images')
         bowl_images = f.create_group('bowl_images')
 
-        # Datasets for metadata (timestamps, frame numbers)
+        # Datasets for metadata (timestamps, frame numbers, is_new_frame flags)
         timestamps = f.create_dataset('timestamps', (0,), maxshape=(None,), dtype='int64')
         frame_numbers = f.create_dataset('frame_numbers', (0,), maxshape=(None,), dtype='int32')
+        new_frame_flags = f.create_dataset('is_new_frame', (0,), maxshape=(None,), dtype='i1')  # 1= new frame, 0=repeat
+        arduino_handshake_flags = f.create_dataset('arduino_handshake', (0,), maxshape=(None,), dtype='i1')  # 1= handshake sent, 0=not
 
         while True:
-            try:
-                # Wait up to 1s for next frame
-                data = queue.get(timeout=1.0)
-            except QueueEmpty:
-                # No new frame yet → keep waiting
-                continue
+            data = queue.get()
 
             # Stop condition
             if data == "STOP":
@@ -90,24 +87,22 @@ def noise_pattern_writer(queue, base_path="noise_patterns", run_tag="test", debu
             num = data['frame_number']
             orig = data['original_image']
             bowl = data['bowl_image']
+            flag = data['is_new_frame']
+            arduino_handshake_flag = data['arduino_handshake']  
 
             # Expand metadata datasets by 1 and save values
             i = timestamps.shape[0]
             timestamps.resize((i + 1,))
             frame_numbers.resize((i + 1,))
-            timestamps[i], frame_numbers[i] = ts, num
+            new_frame_flags.resize((i + 1,))
+            arduino_handshake_flags.resize((i + 1,))
+            timestamps[i], frame_numbers[i], new_frame_flags[i], arduino_handshake_flags[i] = ts, num, flag, arduino_handshake_flag
 
             # Save images under unique names
             frame_name = f'frame_{num:06d}'
-            try:
-                original_images.create_dataset(frame_name, data=orig, compression='gzip', compression_opts=1)
-                bowl_images.create_dataset(frame_name, data=bowl, compression='gzip', compression_opts=1)
-            except ValueError as e:
-                if "name already exists" in str(e):
-                    if debug:
-                        print(f"[NoiseWriter] Warning: Frame {num} already exists, skipping")
-                    continue
-                raise  # Unexpected error → propagate
+
+            original_images.create_dataset(frame_name, data=orig, compression='gzip', compression_opts=1)
+            bowl_images.create_dataset(frame_name, data=bowl, compression='gzip', compression_opts=1)
 
             # Increment frame count
             frame_count += 1
