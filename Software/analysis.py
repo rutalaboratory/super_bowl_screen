@@ -107,12 +107,22 @@ def find_duplicate_timestamp_frames(filepath):
     
     return duplicates
 
-def compare_frame_files(file1, file2):
+def compare_frame_files(file1, file2, json1, json2):
     """
     Compare two HDF5 noise pattern files by printing frame numbers and plotting timestamps
     for frames that were marked as 'new' (is_new_frame == 1).
     Also compute average and standard deviation of timestamp differences.
     """
+
+    # load json files
+     # --- Load experiment metadata ---
+    with open(json1, "r", encoding="utf-8") as f1, open(json2, "r", encoding="utf-8") as f2:
+        config1 = json.load(f1)
+        config2 = json.load(f2)
+
+    trigger_ns_1 = config1["arduino"]["hardware_trigger_2p_time"]
+    trigger_ns_2 = config2["arduino"]["hardware_trigger_2p_time"]   
+
     # Load both files
     with h5py.File(file1, 'r') as f1, h5py.File(file2, 'r') as f2:
         fn1 = f1['frame_numbers'][:]
@@ -134,8 +144,9 @@ def compare_frame_files(file1, file2):
     fn1_new, ts1_new = fn1_new[:n], ts1_new[:n]
     fn2_new, ts2_new = fn2_new[:n], ts2_new[:n]
 
-    # Compute relative timestamps (ms) with respect to *first new frame* in each file
-    t0_1, t0_2 = ts1_new[0], ts2_new[0]
+    # Compute relative timestamps (ms) with respect to the trigger time
+    t0_1, t0_2 = trigger_ns_1, trigger_ns_2
+    # t0_1, t0_2 = ts1_new[0], ts2_new[0]
     rel_ts1 = (ts1_new - t0_1) / 1e6  # ms
     rel_ts2 = (ts2_new - t0_2) / 1e6  # ms
 
@@ -156,6 +167,20 @@ def compare_frame_files(file1, file2):
     print(f"Timestamp difference stats (File1 - File2):")
     print(f"  Average difference: {avg_diff:.2f} ms")
     print(f"  Std deviation:      {std_diff:.2f} ms\n")
+
+     # --- Plot 2: Histogram of timing differences ---
+    plt.figure(figsize=(10, 5))
+    bins = np.linspace(avg_diff - 3*std_diff, avg_diff + 3*std_diff, 40)
+    plt.hist(diffs, bins=bins, color="gray", edgecolor="black", alpha=0.7)
+    plt.axvline(avg_diff, color="red", linestyle="--", label=f"Mean = {avg_diff:.4f}ms")
+    plt.axvline(avg_diff - std_diff, color="blue", linestyle=":", label=f"±1σ = {std_diff:.4f}ms")
+    plt.axvline(avg_diff + std_diff, color="blue", linestyle=":")
+    plt.xlabel("Difference in timestamps for the same new frames between experiments (ms)")
+    plt.ylabel("Count")
+    plt.title("Histogram of Timing Differences for New Frames")
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
 
     # Plot relative timestamps for new frames
     plt.figure(figsize=(10,5))
@@ -329,13 +354,16 @@ def get_first_frame_relative_time(json_path, h5_path):
     # Load HDF5 and get first frame timestamp
     with h5py.File(h5_path, "r") as f:
         first_frame_time = f["timestamps"][0]
-    
+        second_frame_time = f["timestamps"][1]
+        third_frame_time = f["timestamps"][2]
+
     # Convert nanoseconds difference to seconds
     relative_time_sec = (first_frame_time - trigger_time) / 1e9
 
     print(f"First frame time: {first_frame_time} ns")
     print(f"Trigger time:     {trigger_time} ns")
-    
+    print(f"Time between first and second frame: {(second_frame_time - first_frame_time) /1e9 } seconds")
+    print(f"Time between second and third frame: {(third_frame_time - second_frame_time) /1e9 } seconds")
     # Adjust for dark screen duration
     relative_time_sec_dark = relative_time_sec - dark_screen_duration
     
