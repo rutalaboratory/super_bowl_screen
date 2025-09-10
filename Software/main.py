@@ -43,6 +43,9 @@ if __name__ == "__main__":
     save_process = Process(target=noise_pattern_writer, args=(noise_queue, save_path, file_name, run_tag, debug))
     save_process.start()
 
+    # Warmup: put a dummy message
+    noise_queue.put("WARMUP")
+    
     # Set up FicTrac if enabled
     use_fictrac = config["use_fictrac"]
     
@@ -120,19 +123,7 @@ if __name__ == "__main__":
                     framerate=noise_config["framerate"],
                     debug=debug)
 
-    # Send trigger to 2P microscope
-    if use_arduino:
-        hardware_trigger_2p = arduino.send_trigger()
-
-    # Run generate()
-    Arena.generate(
-        noise.run,
-        duration=duration,
-        rot_offset=(0, 0, 0),
-        save_queue=noise_queue,  # <-- frame aving happens inside generate()
-    )
-
-    # --- Dump experimental parameters to JSON manifest ---
+    # --- Dump experimental parameters to JSON manifest BEFORE starting the experiment ---
     experiment_data = {
         "duration_s": duration,
         "debug": debug,
@@ -172,24 +163,38 @@ if __name__ == "__main__":
             "port": port,
             "baud_rate": baud_rate,
             "handshake_interval": handshake_interval,
-            "hardware_trigger_2p_time": hardware_trigger_2p,
+            "hardware_trigger_2p_time": None,   # <-- Not yet triggered
         } if use_arduino else None,
-        # Helpful for matching JSON to saved frames on disk
         "outputs": {
-            "noise_frames_dir": noise_config["save_path"],
             "fictrac_csv": (fictrac_config["output_csv"] if use_fictrac else None)
         }
     }
 
-    # Where to save the manifest (next to noise frames by default)
+    # Save the manifest before the trigger
     experiment_data_dir = noise_config.get("save_path", ".")
     os.makedirs(experiment_data_dir, exist_ok=True)
-
-    # Timestamped, human-readable filename
     manifest_path = os.path.join(experiment_data_dir, f"{run_tag}_experiment_config.json")
 
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(experiment_data, f, indent=2)
+
+    # Send trigger to 2P microscope
+    if use_arduino:
+        hardware_trigger_2p = arduino.send_trigger()
+
+    # Run generate()
+    Arena.generate(
+        noise.run,
+        duration=duration,
+        rot_offset=(0, 0, 0),
+        save_queue=noise_queue,  # <-- frame aving happens inside generate()
+    )
+
+    # --- Update JSON with actual trigger time ---
+    if use_arduino:
+        experiment_data["arduino"]["hardware_trigger_2p_time"] = hardware_trigger_2p
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(experiment_data, f, indent=2)
 
     # --- Teardown ---
     # Tell the writer we're done and wait for it to finish
