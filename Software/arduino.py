@@ -6,7 +6,7 @@ class ArduinoCommunication:
 
     def __init__(self,
                  port='/dev/ttyACM0',
-                 baud_rate=9600,
+                 baud_rate=115200,
                  handshake_interval=10):
         
         self.port = port
@@ -27,4 +27,5 @@ class ArduinoCommunication:
     
     def handshake(self):
             self.ser.write(b'H')  # send handshake command
-            print("[Arduino] Handshake sent.")
+            self.ser.flush()
+        #     print("[Arduino] Handshake sent.")

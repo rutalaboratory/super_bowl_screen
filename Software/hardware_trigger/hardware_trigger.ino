@@ -1,32 +1,27 @@
-// Arduino: Serial Trigger + Handshake Receiver
-// Listens for serial input and generates a TTL pulse on pin 8
-// - 'T' → generate a TTL pulse on pin 8 and reply "RCVD"
-// - 'H' → reply "HANDSHAKE_OK"
-
-const int triggerPin = 8;        // Pin used for TTL output
+const int triggerPin = 8;
 const int handshakePin = 7;
-const int pulseDuration = 10;    // pulse width in ms
+
+// Set your pulse duration here (in millisecond)
+const int pulseDuration = 1;  // 1 ms pulse
 
 void setup() {
   pinMode(triggerPin, OUTPUT);
-  pinMode(handshakePin,OUTPUT);
+  pinMode(handshakePin, OUTPUT);
   digitalWrite(triggerPin, LOW);
   digitalWrite(handshakePin, LOW);
-  Serial.begin(9600); // Match Python baud rate
+  Serial.begin(115200);
 }
 
 void loop() {
   if (Serial.available() > 0) {
     char cmd = Serial.read();
 
-    if (cmd == 'T') {  // Trigger command
-      Serial.print("RCVD");
+    if (cmd == 'T') {
       digitalWrite(triggerPin, HIGH);
       delay(pulseDuration);
       digitalWrite(triggerPin, LOW);
     } 
-    else if (cmd == 'H') {  // Handshake command
-      Serial.print("HANDSHAKE_OK");
+    else if (cmd == 'H') {
       digitalWrite(handshakePin, HIGH);
       delay(pulseDuration);
       digitalWrite(handshakePin, LOW);
