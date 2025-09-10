@@ -91,10 +91,12 @@ class Stimulation_Pipeline():
         # proj_y is half the width to maintain aspect ratio
         # Here we assume a 2:1 aspect ratio for the bowl projection
 
+        self.projector_width_pixels = projector_width_pixels
+
         self.Projector_1 = Projector(res_x=projector_resolution[0],
                                      res_y=projector_resolution[1],
-                                     proj_x=projector_width_pixels,
-                                     proj_y=int(projector_width_pixels/2),
+                                     proj_x=self.projector_width_pixels,
+                                     proj_y=int(self.projector_width_pixels/2),
                                      fov_azi=fov_azi,
                                      fov_ele=fov_ele)
 
@@ -102,6 +104,9 @@ class Stimulation_Pipeline():
                                                       fov_azi,
                                                       fov_ele)
         
+        self.warmup_jit()   # Warm up JIT-compiled functions
+        print("JIT warmup complete.")
+
         # Initialize timing variables for stimulus presentation
         self.dt = 0          # Time elapsed since start
         self.time_start = 0  # Start time of stimulus
@@ -125,6 +130,23 @@ class Stimulation_Pipeline():
         # Print initialization info
         print("initialize Stimulation Pipeline < ",self.WINDOW_NAME," >: xdim=,",self.xdim,"ydim=",self.ydim,
               "at position x=", self.width_first,"y=", self.height_first)
+
+    def warmup_jit(self):
+        # Dummy image with the right shape
+        dummy_img = np.zeros((int(self.projector_width_pixels/2), int(self.projector_width_pixels), 3), dtype=np.uint8)
+        dummy_dest = np.zeros_like(dummy_img)
+        
+        # Warm up Stimulus rotation
+        _ = self.Stimulus.rot_equi_img(dummy_img, dummy_dest, 0.0, 0.0, 0.0)
+
+        # Warm up projection
+        _ = self.Projector_1.project_image(dummy_img)
+
+        # Warm up mask insertion
+        _ = self.Projector_1.mask_image(dummy_img)
+
+        # Warm up select_fov / write_fov
+        _ = select_fov(dummy_img)
 
     def project_dot_at(self, azimuth, elevation, radius=5, dot_color=(255, 255, 255), bg_color=(0, 0, 0)):
         """
@@ -223,7 +245,18 @@ class Stimulation_Pipeline():
     def show_dark_screen(self,duration):
         output2 = np.zeros((self.Projector_1.resolution[1], self.Projector_1.resolution[0],3),dtype = "uint8")
         cv2.imshow(self.WINDOW_NAME,output2)
-        key = cv2.waitKey(int(duration*1000))
+        # key = cv2.waitKey(int(duration*1000))
+
+        start = time.perf_counter()
+
+        while (time.perf_counter() - start) < duration:
+            key = cv2.waitKey(1)  # check every 1 ms
+            if key & 0xFF == 27:  # ESC
+
+                cv2.destroyAllWindows()
+                return False  # aborted
+
+        return True  # finished normally
 
 
     def show_trigger(self):
@@ -299,17 +332,19 @@ class Stimulation_Pipeline():
         fpss = np.array([])
         fps = 0
         timer = cv2.getTickCount()
-        self.show_dark_screen(self.dark_screen_duration)
+       
+        if not self.show_dark_screen(self.dark_screen_duration):
+            print("[Image Generator] Aborted before starting (ESC pressed during dark screen).")
+            return
+        
+        # self.show_dark_screen(self.dark_screen_duration)
         #self.show_trigger()
-        self.time_start = time.time()
+        self.time_start = time.perf_counter_ns() / 1e9  # Convert to seconds
 
         # Local counter for saved frame numbers
         saved_frame_idx = 0
-        
-        # No handshake yet
-        last_handshake_time = None  
-
-        while time.time() < self.time_start + duration:
+                
+        while (time.perf_counter_ns() / 1e9) < self.time_start + (duration - self.dark_screen_duration):
             # Get the next frame from the generator/callback
             Input_im = function(*args, **kwargs)
 
@@ -342,18 +377,13 @@ class Stimulation_Pipeline():
 
             # print("Timestamp after Image Masked: ", time.perf_counter_ns())
 
+            # --- Arduino Handshake: once per new frame ---
+            if self.arduino is not None and self.is_new_frame:
+                self.arduino.handshake()
+            
             timestamp =  time.perf_counter_ns()  # Timestamp in nanoseconds
 
             cv2.imshow(self.WINDOW_NAME, output)
-
-           # Arduino Handshake 
-            self.arduino_handshake_flag = False
-            if self.arduino is not None:
-                handshake_interval = self.arduino.handshake_interval * 1e9  # ns
-                if last_handshake_time is None or (timestamp >= last_handshake_time + handshake_interval):
-                    self.arduino.handshake()
-                    self.arduino_handshake_flag = True
-                    last_handshake_time = timestamp
 
             # Update FPS stats
             tick = cv2.getTickCount() - timer
@@ -363,6 +393,9 @@ class Stimulation_Pipeline():
 
             # Let OpenCV update the window; time *after* this approximates display time
             key = cv2.waitKey(1)
+
+            elapsed_time = (time.perf_counter_ns() / 1e9) - self.time_start
+            print(f"[Image Generator] Elapsed time: {elapsed_time:.2f}s / {duration:.2f}s", end='\r', flush=True)
 
             if self.debug:
                 print('[Image Generator] Frame', saved_frame_idx, 'at', timestamp, 'ns')
@@ -374,8 +407,7 @@ class Stimulation_Pipeline():
                 'bowl_image': output.copy() if hasattr(output, 'copy') else output,
                 'timestamp': timestamp,
                 'frame_number': saved_frame_idx,
-                'is_new_frame': int(self.is_new_frame),  # 1 if new, 0 if reused
-                'arduino_handshake': int(self.arduino_handshake_flag)  # 1 if handshake sent, 0 if not
+                'is_new_frame': int(self.is_new_frame)  # 1 if new, 0 if reused
             })
                 saved_frame_idx += 1
 
@@ -385,7 +417,7 @@ class Stimulation_Pipeline():
 
         # self.show_trigger()
         # self.show_dark_screen(0.1)
-        print(f"[Image Generator] Average Loop FPS: {np.mean(fpss):.1f}, Total frames displayed: {saved_frame_idx}, Total frames generated: {self.frames}")
+        print(f"[Image Generator] Average Loop FPS: {np.mean(fpss):.1f}, Total frames displayed: {saved_frame_idx}, Total New frames generated: {self.frames}")
         
         
     def looming_disk(self,radius,speed,distance,color_disc,color_bg,center=None):
@@ -709,14 +741,14 @@ class ShowNoise():
         timer = cv2.getTickCount()
         print("DEBUG", xdim, ydim, self.x_noise, self.y_noise)
 
-    # In class ShowNoise (bowl_stimulate_class.py)
+    # In class ShowNoise 
     def run(self):
         """
         Generate and return the next frame of noise.
         """
         # Calculate when the next frame should be shown based on the desired framerate
         theoretical_elapsed_time = self.arena.frames * (1 / self.framerate)
-        self.arena.dt = time.time() - self.arena.time_start
+        self.arena.dt = (time.perf_counter_ns() / 1e9) - self.arena.time_start
 
         # Print timing info every 60 frames
         if self.arena.frames % 60 == 0 and self.debug:
