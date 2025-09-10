@@ -30,12 +30,6 @@ def csv_writer(queue, csv_path):
     print("[Writer] CSV writing complete and file closed.")
 
 
-import os
-import time
-import h5py
-from queue import Empty as QueueEmpty
-
-
 def noise_pattern_writer(queue, base_path="noise_patterns", file_name="noise_patterns", run_tag="test", debug=False, flush_interval=100):
     """
     Continuously saves noise pattern frames from a queue into an HDF5 file.
@@ -70,7 +64,6 @@ def noise_pattern_writer(queue, base_path="noise_patterns", file_name="noise_pat
         timestamps = f.create_dataset('timestamps', (0,), maxshape=(None,), dtype='int64')
         frame_numbers = f.create_dataset('frame_numbers', (0,), maxshape=(None,), dtype='int32')
         new_frame_flags = f.create_dataset('is_new_frame', (0,), maxshape=(None,), dtype='i1')  # 1= new frame, 0=repeat
-        arduino_handshake_flags = f.create_dataset('arduino_handshake', (0,), maxshape=(None,), dtype='i1')  # 1= handshake sent, 0=not
 
         while True:
             data = queue.get()
@@ -81,6 +74,10 @@ def noise_pattern_writer(queue, base_path="noise_patterns", file_name="noise_pat
                     print(f"[NoiseWriter] Received STOP after {frame_count} frames")
                 f.flush()  # Final flush
                 break
+            if data == "WARMUP":
+                if debug:
+                    print("[NoiseWriter] Received WARMUP signal, skipping frame save")
+                continue    
 
             # Extract frame metadata
             ts = data['timestamp']
@@ -88,15 +85,13 @@ def noise_pattern_writer(queue, base_path="noise_patterns", file_name="noise_pat
             orig = data['original_image']
             bowl = data['bowl_image']
             flag = data['is_new_frame']
-            arduino_handshake_flag = data['arduino_handshake']  
 
             # Expand metadata datasets by 1 and save values
             i = timestamps.shape[0]
             timestamps.resize((i + 1,))
             frame_numbers.resize((i + 1,))
             new_frame_flags.resize((i + 1,))
-            arduino_handshake_flags.resize((i + 1,))
-            timestamps[i], frame_numbers[i], new_frame_flags[i], arduino_handshake_flags[i] = ts, num, flag, arduino_handshake_flag
+            timestamps[i], frame_numbers[i], new_frame_flags[i] = ts, num, flag
 
             # Save images under unique names
             frame_name = f'frame_{num:06d}'
