@@ -1,5 +1,5 @@
-duration: 2 # duration for running the script in seconds
-dark_screen_duration: 10  # duration for the initial dark screen (baseline period) in seconds
+duration: 30 # duration for running the script (including baselne period) in seconds
+dark_screen_duration: 10   # duration for the initial dark screen (baseline period) in seconds
 use_fictrac: false  # Set to true to enable FicTrac integration
 debug: false  # Global debug flag - enables detailed output for all processes
 use_arduino: true  # Whether to use an arduino to send a hardware trigger to the 2P Microscope at the start of the experiment and subsequent handshakes
@@ -11,15 +11,15 @@ projector_width_pixels: 1280
 
 # Arduino settings
 arduino_port: "COM3"  # Serial port for Arduino communication
-arduino_baudrate: 9600  # Baud rate for Arduino communication
+arduino_baudrate: 115200  # Baud rate for Arduino communication
 arduino_handshake_interval: 1  # Interval in seconds for Arduino handshake
 
 # Noise pattern settings
 noise:
-  framerate: 5  # The number of frames refreshes (in Hz) (new noise pattern generated)
+  framerate: 10  # The number of frames refreshes (in Hz) (new noise pattern generated)
   pixel_size: 10  # Size of noise pixels in degrees (the bowl is 140 degrees in elevation and 180 degrees in azimuth)
-  save_path: "C:\\Users\\theru\\jrhee\\data\\20250903"  # Directory where frames will be saved
-  file_name: "noise_patterns_test_120s"  # Base name for the saved HDF5 file
+  save_path: "C:\\Users\\theru\\julianarhee\\data\\20250908"  # Directory where frames will be saved
+  file_name: "20250908_Dmel_R35D04-R22D06-RSET-GCaMP8m_005"  # Base name for the saved HDF5 file
 
 # FicTrac settings (only used if use_fictrac is true)
 fictrac:
