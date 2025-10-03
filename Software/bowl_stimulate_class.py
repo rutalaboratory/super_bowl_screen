@@ -148,6 +148,10 @@ class Stimulation_Pipeline():
         # Warm up select_fov / write_fov
         _ = select_fov(dummy_img)
 
+        # Call with typical arguments to trigger JIT compilation
+        _ = rotation_matrix(0.0, 0.0, 0.0)
+
+
     def project_dot_at(self, azimuth, elevation, radius=5, dot_color=(255, 255, 255), bg_color=(0, 0, 0)):
         """
         Projects a single dot on the screen at the given azimuth and elevation (in degrees).
@@ -291,6 +295,7 @@ class Stimulation_Pipeline():
             rotated = self.Stimulus.rot_equi_img(resized,self.dest,roll*self.dt,pitch*self.dt,yaw*self.dt)
             rotated = self.Stimulus.rot_equi_img(rotated,self.dest,rot_offset[0],rot_offset[1],rot_offset[2])
             croped = select_fov(rotated)
+            cv2.imshow("croped",np.array(croped))
             masked = self.Projector_1.project_image(croped)
             output = self.Projector_1.mask_image(masked)
             cv2.imshow(self.WINDOW_NAME,output)
@@ -348,6 +353,11 @@ class Stimulation_Pipeline():
             # Get the next frame from the generator/callback
             Input_im = function(*args, **kwargs)
 
+            if hasattr(function.__self__, "yaw") and hasattr(function.__self__, "get_dot_coordinates"):
+                az, el = function.__self__.get_dot_coordinates(function.__self__.yaw, rot_offset)
+                print(f"Dot position -> Azimuth: {az:.2f}°, Elevation: {el:.2f}°")
+
+
             # print("Timestamp after Image Received: ", time.perf_counter_ns())
 
             # Ensure 3 channels for projection
@@ -395,7 +405,7 @@ class Stimulation_Pipeline():
             key = cv2.waitKey(1)
 
             elapsed_time = (time.perf_counter_ns() / 1e9) - self.time_start
-            print(f"[Image Generator] Elapsed time: {elapsed_time:.2f}s / {duration:.2f}s", end='\r', flush=True)
+            # print(f"[Image Generator] Elapsed time: {elapsed_time:.2f}s / {duration:.2f}s", end='\r', flush=True)
 
             if self.debug:
                 print('[Image Generator] Frame', saved_frame_idx, 'at', timestamp, 'ns')
@@ -445,7 +455,7 @@ class Stimulation_Pipeline():
         pic[mask]=color_disc
         return pic
     
-    def generate_dot(self, background_color, dot_color, dot_center, dot_radius):
+    def generate_dot(self, background_color, dot_color, dot_center, dot_radius, debug=False):
         """
         Draw a dot on a grayscale background.
 
@@ -465,12 +475,24 @@ class Stimulation_Pipeline():
         xx, yy = np.meshgrid(np.arange(xdim), np.arange(ydim))
         dist_squared = (xx - dot_center[0])**2 + (yy - dot_center[1])**2
         mask = dist_squared <= dot_radius**2
-        img[mask] = dot_color
+        img[mask] = dot_color   
+
+        if debug:
+            cv2.imshow("dot pos", img)
+            key = cv2.waitKey(1)
 
         return img
 
+    def horizontal_projection(self):
 
-    
+        img = np.ones((self.ydim, self.xdim), dtype=np.uint8) * 255
+        print("bugbug", self.xdim,self.ydim)
+        cv2.circle(img, (int(self.xdim/2), 280), 40, 0, -1)
+
+        cv2.imshow("dot pos", img)
+        key = cv2.waitKey(1)
+
+        return img
 
 # each online calculated texture class consists of an initialization and an run function.
 # this is necessary to initialize the stimulus parameters before runtime loop
@@ -928,3 +950,142 @@ class ShowPattern():
         self.arena.oldframe = self.pic
 
         return self.pic
+
+# Functions for horizontal moving dot stimulus
+
+import jax
+import jax.numpy as jnp
+
+@jax.jit
+def rotation_matrix(roll=0, pitch=0, yaw=0):
+    roll, pitch, yaw = jnp.deg2rad(jnp.array([roll, pitch, yaw]))
+    R_x = jnp.array([[1, 0, 0],
+                    [0, jnp.cos(roll), -jnp.sin(roll)],
+                    [0, jnp.sin(roll),  jnp.cos(roll)]])
+    R_y = jnp.array([[ jnp.cos(pitch), 0, jnp.sin(pitch)],
+                    [0, 1, 0],
+                    [-jnp.sin(pitch), 0, jnp.cos(pitch)]])
+    R_z = jnp.array([[jnp.cos(yaw), -jnp.sin(yaw), 0],
+                    [jnp.sin(yaw),  jnp.cos(yaw), 0],
+                    [0, 0, 1]])
+    return R_x @ R_y @ R_z
+
+class HorizontalMovingDot():
+    def __init__(self,
+                 arena,
+                 dot_initial_position=0,
+                 dot_cooldown=60,
+                 dot_size=40, 
+                 dot_speed=10, 
+                 dot_direction=1,
+                 dot_limits=(-140, 140),
+                 debug=False):
+        
+        self.arena = arena  # object of the class Stimulation
+        
+        # stimulus parameters
+        self.dot_initial_position = dot_initial_position  # initial yaw position in degrees
+        self.dot_cooldown = dot_cooldown  # time to wait before starting movement
+        self.dot_size = dot_size  # diameter in pixels
+        self.dot_speed = dot_speed  # deg/sec
+        self.dot_direction = dot_direction  # 1: right to left, -1: left to right
+        self.dot_limits = dot_limits  # min and max yaw positions in degrees
+        self.debug = debug
+
+        # initialize stimulus image
+        self.pic = np.ones([self.arena.ydim, self.arena.xdim], dtype="uint8") * 255
+        self.pic[0:int(self.dot_size), :] = 0  # black line at the top (north pole)
+        self.pic = np.stack([self.pic] * 3, axis=-1)
+
+        self.Stim_init = self.arena.Stimulus.rot_equi_img(
+            self.pic, self.arena.dest, roll=0, pitch=-90, yaw=0)
+
+        # local timer and yaw tracking
+        self._last_time = time.time()          # local reference for dt
+        self.yaw = self.dot_initial_position   # current yaw
+        print("yaw initialized to:", self.yaw)
+        # az, el = self.get_dot_coordinates(self.yaw, rot_offset=(0, 90, 0))
+        
+        # print(f"Initial dot position -> Azimuth: {az:.2f}°, Elevation: {el:.2f}°")
+
+    def run(self):
+   
+        # On the first call, initialize last_time from arena.time_start
+        if not hasattr(self, '_initialized_last_time'):
+            self.last_time = self.arena.time_start
+            self._initialized_last_time = True
+
+        self.total_elapsed_time = time.perf_counter_ns() / 1e9 - self.arena.time_start
+        self.arena.dt = time.perf_counter_ns() / 1e9 - self.last_time
+
+        print("dt obtained by run:", self.arena.dt)
+
+        if self.total_elapsed_time > self.dot_cooldown:
+
+            # update yaw incrementally
+            print("Time difference:", self.arena.dt)
+            self.yaw += self.dot_direction * self.dot_speed * self.arena.dt
+            print("yaw obtained by run:", self.yaw)
+            # flip direction at edges
+            if self.yaw > self.dot_limits[1]:
+                self.yaw = self.dot_limits[1]
+                self.dot_direction = -1
+            elif self.yaw < self.dot_limits[0]:
+                self.yaw = self.dot_limits[0]
+                self.dot_direction = 1
+        else:
+            self.yaw = self.dot_initial_position
+            
+            print(f"Waiting for cooldown: {self.dot_cooldown - self.total_elapsed_time:.2f}s remaining",  end='\r')
+
+        if self.debug:
+            print("yaw =", self.yaw)
+
+        # update stimulus image
+        self.pic = self.arena.Stimulus.rot_equi_img(
+            self.Stim_init,
+            self.arena.dest,
+            roll=0,
+            pitch=0,
+            yaw=self.yaw
+        )
+
+        self.last_time = time.perf_counter_ns() / 1e9  # update local timer
+
+        return self.pic
+    
+    def get_dot_coordinates(self, yaw, rot_offset=(0,0,0)):
+        """
+        Convert a dot's yaw position into final (azimuth, elevation) in degrees,
+        accounting for:
+        - software pitch = -90° (for round dot)
+        - physical setup pitch = -90° (north pole is at equator)
+        - Yaw is flipped 180° on the bowl
+        - global rot_offset from Arena.generate
+        """
+        # Start at north pole
+        p = jnp.array([0.0, 0.0, 1.0])
+
+        # Software pitch to make dot round
+        p = rotation_matrix(pitch=-90) @ p
+
+        # Apply yaw rotation 
+        # The yaw rotation is flipped 180° on the bowl
+        p = rotation_matrix(yaw=yaw) @ p
+        p = rotation_matrix(yaw=180) @ p
+        
+        # Apply physical setup pitch offset (-90°)
+        p = rotation_matrix(pitch=-90) @ p
+
+        # Apply global offset from Arena.generate
+        p = rotation_matrix(*rot_offset) @ p
+
+        # Normalize to unit vector
+        p = p / jnp.linalg.norm(p)
+
+        # Convert to spherical coordinates
+        azimuth = jnp.rad2deg(jnp.arctan2(p[1], p[0]))
+        elevation = jnp.rad2deg(jnp.arcsin(p[2]))
+
+        return azimuth, elevation
+    
