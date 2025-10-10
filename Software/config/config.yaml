@@ -1,5 +1,5 @@
-duration: 2 # duration for running the script in seconds
-dark_screen_duration: 10  # duration for the initial dark screen (baseline period) in seconds
+duration: 100 # duration for running the script in seconds
+dark_screen_duration: 0  # duration for the initial dark screen (baseline period) in seconds
 use_fictrac: false  # Set to true to enable FicTrac integration
 debug: false  # Global debug flag - enables detailed output for all processes
 use_arduino: true  # Whether to use an arduino to send a hardware trigger to the 2P Microscope at the start of the experiment and subsequent handshakes
@@ -8,6 +8,7 @@ use_arduino: true  # Whether to use an arduino to send a hardware trigger to the
 # Width of the projected image in pixels that matches the bowl setup, i.e if the projected image's width matches the bowl's width,
 # you are using all 1280 pixels along the width for stimulus presentation (for a 1280x720 projector)
 projector_width_pixels: 1280  
+setup_inclination: 60  # Angle of the setup inclination in degrees (0 if flat on the table, positive if tilted towards the user)w
 
 # Arduino settings
 arduino_port: "COM3"  # Serial port for Arduino communication
@@ -15,20 +16,25 @@ arduino_baudrate: 9600  # Baud rate for Arduino communication
 arduino_handshake_interval: 1  # Interval in seconds for Arduino handshake
 
 # Noise pattern settings
-noise:
-  framerate: 5  # The number of frames refreshes (in Hz) (new noise pattern generated)
-  pixel_size: 10  # Size of noise pixels in degrees (the bowl is 140 degrees in elevation and 180 degrees in azimuth)
-  save_path: "C:\\Users\\theru\\jrhee\\data\\20250903"  # Directory where frames will be saved
-  file_name: "noise_patterns_test_120s"  # Base name for the saved HDF5 file
+# noise:
+#   framerate: 5  # The number of frames refreshes (in Hz) (new noise pattern generated)
+#   pixel_size: 10  # Size of noise pixels in degrees (the bowl is 140 degrees in elevation and 180 degrees in azimuth)
 
 # FicTrac settings (only used if use_fictrac is true)
 fictrac:
   host: "127.0.0.1"
   port: 3000
-  output_csv: "fictrac.csv"
+  # output_csv: "fictrac.csv"
 
-# moving_dot:
-#   elevation: 70
-#   elevation_width: 5
-#   azi_limits: [0, 180]
-#   speed: 50
+stimulus:
+  dot_initial_position: -90
+  dot_cooldown: 0
+  dot_size: 10
+  dot_speed: 50
+  dot_direction: 1
+  dot_limits: [-90, 90]
+
+data_saving:
+  save_path: "C:\\Users\\theru\\jrhee\\data\\20250903"  # Directory where frames will be saved
+  file_name: "noise_patterns_test_120s"  # Base name for the saved HDF5 file
+

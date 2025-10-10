@@ -5,6 +5,7 @@ import time
 import sys
 import functools
 
+import fictrac
 
 
 class Stimulation_Pipeline():
@@ -115,6 +116,13 @@ class Stimulation_Pipeline():
         
         self.is_new_frame = True  # Flag to indicate if a new frame was generated
 
+        # Initialize data structures for capturing data from HorizontalMovingDot
+        self.total_elapsed_time = None  # Total elapsed time since start
+        self.yaw = None  # Yaw angle (to be updated by stimulus)
+        self.azimuthal_position = None  # Azimuthal position of the dot
+        self.elevational_position = None  # Elevational position of the dot
+        self.fictrac_data = None  # Placeholder for FicTrac data
+
         # Set up the display window for the stimulus
         # This creates a window on the second monitor at the specified position
 
@@ -150,6 +158,11 @@ class Stimulation_Pipeline():
 
         # Call with typical arguments to trigger JIT compilation
         _ = rotation_matrix(0.0, 0.0, 0.0)
+
+        # Warm up get_dot_coordinates with typical yaw value
+        # dummy_dot = HorizontalMovingDot(self, dot_initial_position=0)
+        # _ = dummy_dot.get_dot_coordinates(yaw=0.0)
+
 
 
     def project_dot_at(self, azimuth, elevation, radius=5, dot_color=(255, 255, 255), bg_color=(0, 0, 0)):
@@ -355,7 +368,7 @@ class Stimulation_Pipeline():
 
             if hasattr(function.__self__, "yaw") and hasattr(function.__self__, "get_dot_coordinates"):
                 az, el = function.__self__.get_dot_coordinates(function.__self__.yaw, rot_offset)
-                print(f"Dot position -> Azimuth: {az:.2f}°, Elevation: {el:.2f}°")
+                # print(f"Dot position -> Azimuth: {az:.2f}°, Elevation: {el:.2f}°")
 
 
             # print("Timestamp after Image Received: ", time.perf_counter_ns())
@@ -413,12 +426,17 @@ class Stimulation_Pipeline():
             # ---- Save data here  ----
             if save_queue is not None:
                 save_queue.put({
-                'original_image': Input_im.copy() if hasattr(Input_im, 'copy') else Input_im,
-                'bowl_image': output.copy() if hasattr(output, 'copy') else output,
-                'timestamp': timestamp,
-                'frame_number': saved_frame_idx,
-                'is_new_frame': int(self.is_new_frame)  # 1 if new, 0 if reused
-            })
+                    'original_image': Input_im.copy() if hasattr(Input_im, 'copy') else Input_im,
+                    'bowl_image': output.copy() if hasattr(output, 'copy') else output,
+                    'timestamp': timestamp,
+                    'frame_number': saved_frame_idx,
+                    'is_new_frame': int(self.is_new_frame),  # 1 if new, 0 if reused
+                    'azimuthal_position': getattr(self, 'azimuthal_position', None),
+                    'elevation_position': getattr(self, 'elevation_position', None),
+                    'yaw': getattr(self, 'yaw', None),
+                    'total_elapsed_time': getattr(self, 'total_elapsed_time', None),
+                    'fictrac_data': getattr(self, 'fictrac_data', None)
+                })
                 saved_frame_idx += 1
 
             if key == 27:  # ESC to exit early
@@ -979,10 +997,17 @@ class HorizontalMovingDot():
                  dot_speed=10, 
                  dot_direction=1,
                  dot_limits=(-140, 140),
+                 fictrac_params={"host": "127.0.0.1", "port": 3000},
                  debug=False):
         
         self.arena = arena  # object of the class Stimulation
         
+        # fictrac parameters
+        self.fictrac_params = fictrac_params
+        print("fictrac params:", self.fictrac_params)
+        self.fictrac_port = fictrac_params["port"]
+        self.fictrac_host = fictrac_params["host"]
+
         # stimulus parameters
         self.dot_initial_position = dot_initial_position  # initial yaw position in degrees
         self.dot_cooldown = dot_cooldown  # time to wait before starting movement
@@ -1001,12 +1026,16 @@ class HorizontalMovingDot():
             self.pic, self.arena.dest, roll=0, pitch=-90, yaw=0)
 
         # local timer and yaw tracking
-        self._last_time = time.time()          # local reference for dt
         self.yaw = self.dot_initial_position   # current yaw
         print("yaw initialized to:", self.yaw)
         # az, el = self.get_dot_coordinates(self.yaw, rot_offset=(0, 90, 0))
         
         # print(f"Initial dot position -> Azimuth: {az:.2f}°, Elevation: {el:.2f}°")
+
+         # initialize the fictrac client 
+        self.fictrac_client = fictrac.FicTracClient(host=self.fictrac_host, port=self.fictrac_port)
+        self.fictrac_client.connect()
+        print("FicTrac client initialized.")
 
     def run(self):
    
@@ -1018,14 +1047,17 @@ class HorizontalMovingDot():
         self.total_elapsed_time = time.perf_counter_ns() / 1e9 - self.arena.time_start
         self.arena.dt = time.perf_counter_ns() / 1e9 - self.last_time
 
-        print("dt obtained by run:", self.arena.dt)
+        # print("dt obtained by run:", self.arena.dt)
 
+        # read data from fictrac
+        fictrac_data = self.fictrac_client.read_frame()
+        # fictrac_data = None
         if self.total_elapsed_time > self.dot_cooldown:
 
             # update yaw incrementally
-            print("Time difference:", self.arena.dt)
+            # print("Time difference:", self.arena.dt)
             self.yaw += self.dot_direction * self.dot_speed * self.arena.dt
-            print("yaw obtained by run:", self.yaw)
+            # print("yaw obtained by run:", self.yaw)
             # flip direction at edges
             if self.yaw > self.dot_limits[1]:
                 self.yaw = self.dot_limits[1]
@@ -1036,7 +1068,7 @@ class HorizontalMovingDot():
         else:
             self.yaw = self.dot_initial_position
             
-            print(f"Waiting for cooldown: {self.dot_cooldown - self.total_elapsed_time:.2f}s remaining",  end='\r')
+            # print(f"Waiting for cooldown: {self.dot_cooldown - self.total_elapsed_time:.2f}s remaining",  end='\r')
 
         if self.debug:
             print("yaw =", self.yaw)
@@ -1049,43 +1081,53 @@ class HorizontalMovingDot():
             pitch=0,
             yaw=self.yaw
         )
+        
+        self.arena.azimuthal_position, self.arena.elevation_position = self.get_dot_coordinates(self.yaw, rot_offset=(0, 90, 0))
+        self.arena.total_elapsed_time = self.total_elapsed_time  
+        self.arena.yaw = self.yaw 
+        self.arena.fictrac_data = fictrac_data
 
         self.last_time = time.perf_counter_ns() / 1e9  # update local timer
 
         return self.pic
     
-    def get_dot_coordinates(self, yaw, rot_offset=(0,0,0)):
-        """
-        Convert a dot's yaw position into final (azimuth, elevation) in degrees,
-        accounting for:
-        - software pitch = -90° (for round dot)
-        - physical setup pitch = -90° (north pole is at equator)
-        - Yaw is flipped 180° on the bowl
-        - global rot_offset from Arena.generate
-        """
-        # Start at north pole
-        p = jnp.array([0.0, 0.0, 1.0])
+    def get_dot_coordinates(self, yaw=0, rot_offset=(0,0,0)):
+        return get_dot_coordinates_jit(yaw, rot_offset)
 
-        # Software pitch to make dot round
-        p = rotation_matrix(pitch=-90) @ p
 
-        # Apply yaw rotation 
-        # The yaw rotation is flipped 180° on the bowl
-        p = rotation_matrix(yaw=yaw) @ p
-        p = rotation_matrix(yaw=180) @ p
-        
-        # Apply physical setup pitch offset (-90°)
-        p = rotation_matrix(pitch=-90) @ p
+@jax.jit
+def get_dot_coordinates_jit(yaw=0, rot_offset=(0,0,0)):
+    """
+    Convert a dot's yaw position into final (azimuth, elevation) in degrees,
+    accounting for:
+    - software pitch = -90° (for round dot)
+    - physical setup pitch = -90° (north pole is at equator)
+    - Yaw is flipped 180° on the bowl
+    - global rot_offset from Arena.generate
+    """
+    # Start at north pole
+    p = jnp.array([0.0, 0.0, 1.0])
 
-        # Apply global offset from Arena.generate
-        p = rotation_matrix(*rot_offset) @ p
+    # Software pitch to make dot round
+    p = rotation_matrix(pitch=-90) @ p
 
-        # Normalize to unit vector
-        p = p / jnp.linalg.norm(p)
-
-        # Convert to spherical coordinates
-        azimuth = jnp.rad2deg(jnp.arctan2(p[1], p[0]))
-        elevation = jnp.rad2deg(jnp.arcsin(p[2]))
-
-        return azimuth, elevation
+    # Apply yaw rotation 
+    # The yaw rotation is flipped 180° on the bowl
+    p = rotation_matrix(yaw=yaw) @ p
+    p = rotation_matrix(yaw=180) @ p
     
+    # Apply physical setup pitch offset (-90°)
+    p = rotation_matrix(pitch=-90) @ p
+
+    # Apply global offset from Arena.generate
+    p = rotation_matrix(*rot_offset) @ p
+
+    # Normalize to unit vector
+    p = p / jnp.linalg.norm(p)
+
+    # Convert to spherical coordinates
+    azimuth = jnp.rad2deg(jnp.arctan2(p[1], p[0]))
+    elevation = jnp.rad2deg(jnp.arcsin(p[2]))
+
+    return azimuth, elevation
+

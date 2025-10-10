@@ -144,28 +144,3 @@ class FicTracClient:
             self.read_data()
         else:
             print("[Client] Exiting due to connection failure")
-
-    def kill_fictrac_gracefully(self, wkill_path=r"C:\ProgramData\chocolatey\lib\windows-kill\tools\windows-kill_x64_1.1.4_lib_release\windows-kill.exe"):
-        """
-        Attempt to send SIGINT to FicTrac using windows-kill if it is still running.
-        """
-        try:
-            # Check if fictrac.exe is running
-            result = subprocess.check_output('tasklist | findstr /i "fictrac.exe"', shell=True, text=True)
-            lines = result.strip().splitlines()
-
-            for line in lines:
-                parts = line.split()
-                if len(parts) >= 2:
-                    pid = parts[1]  # Extract process ID
-                    print(f"[Client] Sending SIGINT to FicTrac (PID {pid})...")
-                    try:
-                        # Use windows-kill to send SIGINT to the process
-                        subprocess.run(f'"{wkill_path}" -SIGINT {pid}', shell=True, timeout=2)
-                        print("[Client] SIGINT sent to FicTrac.")
-                    except subprocess.TimeoutExpired:
-                        print("[Client] windows-kill timed out. FicTrac may not have exited.")
-                else:
-                    print("[Client] Could not parse tasklist output.")
-        except subprocess.CalledProcessError:
-            print("[Client] FicTrac not running or could not find fictrac.exe.")
