@@ -1,5 +1,5 @@
-duration: 100 # duration for running the script in seconds
-dark_screen_duration: 0  # duration for the initial dark screen (baseline period) in seconds
+duration: 600 # duration for running the script in seconds
+dark_screen_duration: 60  # duration for the initial dark screen (baseline period) in seconds
 use_fictrac: false  # Set to true to enable FicTrac integration
 debug: false  # Global debug flag - enables detailed output for all processes
 use_arduino: true  # Whether to use an arduino to send a hardware trigger to the 2P Microscope at the start of the experiment and subsequent handshakes
@@ -8,7 +8,7 @@ use_arduino: true  # Whether to use an arduino to send a hardware trigger to the
 # Width of the projected image in pixels that matches the bowl setup, i.e if the projected image's width matches the bowl's width,
 # you are using all 1280 pixels along the width for stimulus presentation (for a 1280x720 projector)
 projector_width_pixels: 1280  
-setup_inclination: 60  # Angle of the setup inclination in degrees (0 if flat on the table, positive if tilted towards the user)w
+setup_inclination: 30  # Angle of the setup inclination in degrees (0 if flat on the table, positive if tilted towards the user)w
 
 # Arduino settings
 arduino_port: "COM3"  # Serial port for Arduino communication

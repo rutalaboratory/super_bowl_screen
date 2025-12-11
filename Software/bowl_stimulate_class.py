@@ -1051,26 +1051,17 @@ class HorizontalMovingDot():
 
         # read data from fictrac
         fictrac_data = self.fictrac_client.read_frame()
+        
+        self.current_heading = fictrac_data['heading']  # in degrees
+        
+        if self.debug:
+            print("FicTrac heading:", self.current_heading)
+
         # fictrac_data = None
         if self.total_elapsed_time > self.dot_cooldown:
-
-            # update yaw incrementally
-            # print("Time difference:", self.arena.dt)
-            self.yaw += self.dot_direction * self.dot_speed * self.arena.dt
-            # print("yaw obtained by run:", self.yaw)
-            # flip direction at edges
-            if self.yaw > self.dot_limits[1]:
-                self.yaw = self.dot_limits[1]
-                self.dot_direction = -1
-            elif self.yaw < self.dot_limits[0]:
-                self.yaw = self.dot_limits[0]
-                self.dot_direction = 1
-        else:
-            self.yaw = self.dot_initial_position
-            
+            self.protocol("closed_loop")
             # print(f"Waiting for cooldown: {self.dot_cooldown - self.total_elapsed_time:.2f}s remaining",  end='\r')
 
-        if self.debug:
             print("yaw =", self.yaw)
 
         # update stimulus image
@@ -1093,7 +1084,27 @@ class HorizontalMovingDot():
     
     def get_dot_coordinates(self, yaw=0, rot_offset=(0,0,0)):
         return get_dot_coordinates_jit(yaw, rot_offset)
-
+    
+    def protocol(self, type):
+        if type == "open_loop":
+            # update yaw incrementally
+            # print("Time difference:", self.arena.dt)
+            self.yaw += self.dot_direction * self.dot_speed * self.arena.dt
+            # print("yaw obtained by run:", self.yaw)
+            # flip direction at edges
+            if self.yaw > self.dot_limits[1]:
+                self.yaw = self.dot_limits[1]
+                self.dot_direction = -1
+            elif self.yaw < self.dot_limits[0]:
+                self.yaw = self.dot_limits[0]
+                self.dot_direction = 1
+        else:
+            self.yaw = self.dot_initial_position
+        
+        if type == "closed_loop":
+            self.current_heading = self.current_heading * (180 / jnp.pi)  # convert from radians to degrees
+            self.yaw = -self.current_heading
+            # in closed-loop, yaw is controlled by fictrac heading
 
 @jax.jit
 def get_dot_coordinates_jit(yaw=0, rot_offset=(0,0,0)):
